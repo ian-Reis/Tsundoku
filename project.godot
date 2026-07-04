@@ -14,11 +14,11 @@ config/name="Tsundoku 積ん読"
 config/version="0.1"
 run/main_scene="uid://bxonfxdb3omxn"
 config/features=PackedStringArray("4.7", "GL Compatibility")
-config/icon="res://icon.svg"
+config/icon="uid://bihtoshobeqwy"
 
 [display]
 
-window/size/viewport_width=1280
+window/size/viewport_width=1024
 window/size/viewport_height=720
 window/stretch/mode="canvas_items"
 window/stretch/aspect="expand"
