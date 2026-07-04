@@ -92,7 +92,7 @@ label_settings = SubResource("LabelSettings_g4v7s")
 layout_mode = 2
 
 [node name="Panel" type="Panel" parent="CenterContainer/MarginContainer/VBoxContainer/MenuCenterContainer" unique_id=1559609058]
-custom_minimum_size = Vector2(845.995, 400)
+custom_minimum_size = Vector2(1000, 400)
 layout_mode = 2
 theme_override_styles/panel = SubResource("StyleBoxFlat_57qmd")
 
@@ -122,11 +122,15 @@ custom_minimum_size = Vector2(100, 0)
 layout_mode = 2
 theme_override_fonts/font = SubResource("FontVariation_ulxk5")
 selected = 0
-item_count = 2
-popup/item_0/text = "Novel"
+item_count = 4
+popup/item_0/text = "Novel (CentralNovel)"
 popup/item_0/id = 0
-popup/item_1/text = "Mangá"
+popup/item_1/text = "Mangá (MangaLivre)"
 popup/item_1/id = 1
+popup/item_2/text = "Mangá (MangaFire)"
+popup/item_2/id = 2
+popup/item_3/text = "Mangá (MangaDex)"
+popup/item_3/id = 3
 
 [node name="VolumesTextEdit" type="TextEdit" parent="CenterContainer/MarginContainer/VBoxContainer/MenuCenterContainer/MenuVBoxContainer/SearchMarginContainer/CenterContainer/HBoxContainer" unique_id=1195844240]
 unique_name_in_owner = true
