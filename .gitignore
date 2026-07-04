@@ -21,6 +21,9 @@ content/runtime/downloads/
 # Temp files
 content/runtime/temp/
 
+# Python cache
+__pycache__/
+
 # OS metadata
 .DS_Store
 Thumbs.db
