@@ -1,81 +1,171 @@
 extends Control
 
-@onready var url_text_edit: TextEdit = %UrlTextEdit
-@onready var download_button: Button = %DownloadButton
-@onready var progress_bar: ProgressBar = %ProgressBar   # adicione no .tscn
-@onready var status_label: Label = %StatusLabel         # adicione no .tscn
+## Tela de download com FILA. O usuário cola uma URL, escolhe o tipo e clica
+## Download; um card (Task) é criado no QueueVBoxContainer. Os jobs rodam um de
+## cada vez (evita saturar conexão/CPU e o site). Cada job tem seu próprio
+## status_<id>.json — assim jobs futuros/paralelos nunca sobrescrevem o mesmo
+## arquivo. O Python roda como subprocesso (create_process, não bloqueia a UI)
+## e reporta progresso via status file, lido aqui por polling num Timer.
 
-# Caminhos do runtime. globalize_path converte res:// pra um caminho absoluto
-# do sistema — necessário porque o processo Python roda fora do Godot e não
-# entende res://.
+@onready var url_text_edit: TextEdit = %UrlTextEdit
+@onready var volumes_text_edit: TextEdit = %VolumesTextEdit
+@onready var chapters_text_edit: TextEdit = %ChaptersTextEdit
+@onready var option_button: OptionButton = %OptionButton
+@onready var download_button: Button = %DownloadButton
+@onready var status_label: Label = %StatusLabel
+@onready var queue_vbox_container: VBoxContainer = %QueueVBoxContainer
+
+const TASK: PackedScene = preload("res://content/execute/task.tscn")
+
+# Índices do OptionButton (Novel / Mangá).
+const TYPE_NOVEL := 0
+const TYPE_MANGA := 1
+
+# Usado quando o campo de capítulos fica vazio: baixa a série inteira.
+const DEFAULT_CHAPTERS := "all"
+
+# Cores de estado dos cards.
+const COLOR_QUEUED := Color(0.7, 0.7, 0.7)      # cinza — esperando na fila
+const COLOR_ACTIVE := Color(1, 1, 1)            # branco — rodando
+const COLOR_DONE := Color(0.55, 0.9, 0.55)      # verde — concluído
+const COLOR_ERROR := Color(0.95, 0.5, 0.5)      # vermelho — erro/cancelado
+
+# Caminhos do runtime. globalize_path converte res:// pra caminho absoluto do
+# sistema — o processo Python roda fora do Godot e não entende res://.
 var runtime_dir: String = ProjectSettings.globalize_path("res://content/runtime")
 var python_exe: String = runtime_dir.path_join(".venv/Scripts/python.exe")
-var script_path: String = runtime_dir.path_join("centralnovel_dlv7.py")
-var status_file: String = runtime_dir.path_join("temp/status.json")
+var script_novel: String = runtime_dir.path_join("centralnovel_dlv7.py")
+var script_manga: String = runtime_dir.path_join("manga_dl.py")  # ainda não existe
+var temp_dir: String = runtime_dir.path_join("temp")
 var output_dir: String = runtime_dir.path_join("downloads")
 
-var current_pid: int = -1
-var poll_timer: Timer
+# Fila e estado de execução.
+var _queue: Array[Dictionary] = []   # jobs esperando
+var _current: Dictionary = {}        # job rodando agora ({} = nenhum)
+var _next_id: int = 0                # contador pra status_<id>.json único
+var _poll_timer: Timer
 
 
 func _ready() -> void:
-	download_button.pressed.connect(on_download_pressed)
+	download_button.pressed.connect(_on_download_pressed)
 
-	# Timer que faz polling do status.json enquanto o download roda.
-	poll_timer = Timer.new()
-	poll_timer.wait_time = 0.3
-	poll_timer.timeout.connect(_poll_status)
-	add_child(poll_timer)
+	_poll_timer = Timer.new()
+	_poll_timer.wait_time = 0.3
+	_poll_timer.timeout.connect(_poll_status)
+	add_child(_poll_timer)
+
+	_set_status("Cole uma URL e clique em Download.")
 
 
-func on_download_pressed() -> void:
+func _on_download_pressed() -> void:
 	var url := url_text_edit.text.strip_edges()
 	if url == "":
-		status_label.text = "Cole uma URL primeiro."
+		_set_status("Cole uma URL primeiro.")
 		return
 
-	# Evita disparar dois downloads ao mesmo tempo (por enquanto; a fila vem depois).
-	if current_pid != -1 and OS.is_process_running(current_pid):
-		status_label.text = "Já existe um download em andamento."
+	var type := option_button.selected
+	if type == TYPE_MANGA and not FileAccess.file_exists(script_manga):
+		_set_status("Download de mangá ainda não implementado.")
 		return
 
-	# Garante que a pasta temp existe e limpa status antigo, senão o primeiro
-	# poll pode ler o resultado de um download anterior.
-	DirAccess.make_dir_recursive_absolute(status_file.get_base_dir())
-	if FileAccess.file_exists(status_file):
-		DirAccess.remove_absolute(status_file)
+	# Campos opcionais. Capítulos vazio = série inteira; volumes vazio = omitido.
+	var chapters := chapters_text_edit.text.strip_edges()
+	if chapters == "":
+		chapters = DEFAULT_CHAPTERS
+	var volumes := volumes_text_edit.text.strip_edges()
 
-	# Higiene de encoding no Windows (a saga do cp1252). Não custa nada e
-	# evita que erros futuros venham mascarados.
+	_enqueue(url, type, chapters, volumes)
+	url_text_edit.text = ""
+	volumes_text_edit.text = ""
+	chapters_text_edit.text = ""
+
+
+func _enqueue(url: String, type: int, chapters: String, volumes: String) -> void:
+	var id := _next_id
+	_next_id += 1
+
+	var task = TASK.instantiate()  # sem tipo: chamadas dinâmicas (setup/set_state)
+	queue_vbox_container.add_child(task)
+	task.setup(_short_url(url))
+	task.set_state("na fila", COLOR_QUEUED)
+	task.cancel_requested.connect(_on_cancel_requested)
+
+	var job := {
+		"id": id,
+		"url": url,
+		"type": type,
+		"chapters": chapters,
+		"volumes": volumes,
+		"task": task,
+		"status_file": temp_dir.path_join("status_%d.json" % id),
+		"pid": -1,
+	}
+	_queue.append(job)
+	_set_status("%d na fila." % (_queue.size() + (1 if not _current.is_empty() else 0)))
+	_try_start_next()
+
+
+## Se ninguém está rodando e há job na fila, inicia o próximo.
+func _try_start_next() -> void:
+	if not _current.is_empty():
+		return
+	if _queue.is_empty():
+		_set_status("Fila vazia.")
+		return
+	_current = _queue.pop_front()
+	_start_job(_current)
+
+
+func _start_job(job: Dictionary) -> void:
+	# Garante a pasta temp e limpa qualquer status file antigo desse id, senão
+	# o primeiro poll pode ler o resultado de uma rodada anterior.
+	DirAccess.make_dir_recursive_absolute(temp_dir)
+	if FileAccess.file_exists(job["status_file"]):
+		DirAccess.remove_absolute(job["status_file"])
+
+	# Higiene de encoding no Windows (a saga do cp1252): sem isso, erros do
+	# Python podem chegar mascarados.
 	OS.set_environment("PYTHONUTF8", "1")
 
+	var script: String = script_novel if job["type"] == TYPE_NOVEL else script_manga
 	var args := [
-		script_path,
-		url,
-		"--chapters", "1",
+		script,
+		job["url"],
+		"--chapters", job["chapters"],
 		"--output", output_dir,
-		"--status-file", status_file,
+		"--status-file", job["status_file"],
 	]
+	# --volumes é opcional; só passa se o usuário preencheu.
+	if job["volumes"] != "":
+		args.append("--volumes")
+		args.append(job["volumes"])
 
 	# create_process NÃO bloqueia — retorna o PID e o Python roda em paralelo.
-	current_pid = OS.create_process(python_exe, args)
-
-	if current_pid == -1:
-		status_label.text = "Falha ao iniciar o Python. Confira o caminho da venv."
+	job["pid"] = OS.create_process(python_exe, args)
+	if job["pid"] == -1:
+		job["task"].set_state("falha ao iniciar", COLOR_ERROR)
 		push_error("create_process falhou: %s" % python_exe)
+		_current = {}
+		_try_start_next()
 		return
 
-	download_button.disabled = true
-	progress_bar.value = 0
-	status_label.text = "Iniciando..."
-	poll_timer.start()
+	job["task"].set_state("iniciando...", COLOR_ACTIVE)
+	job["task"].set_progress(0)
+	_set_status("Baixando 1 de %d..." % (_queue.size() + 1))
+	_poll_timer.start()
 
 
 func _poll_status() -> void:
+	if _current.is_empty():
+		_poll_timer.stop()
+		return
+
+	var status_file: String = _current["status_file"]
+
 	if not FileAccess.file_exists(status_file):
-		# Processo pode ter começado mas ainda não escreveu o primeiro status.
-		# Se o processo já morreu sem gerar arquivo, algo deu errado.
-		if current_pid != -1 and not OS.is_process_running(current_pid):
+		# O processo pode ter começado mas ainda não escreveu nada. Se ele já
+		# morreu sem gerar arquivo, algo deu errado na inicialização.
+		if not OS.is_process_running(_current["pid"]):
 			_on_process_gone_without_status()
 		return
 
@@ -90,58 +180,95 @@ func _poll_status() -> void:
 	if json.parse(content) != OK:
 		return  # JSON incompleto por race rara; ignora e tenta de novo
 
-	var data: Dictionary = json.data
-	_apply_status(data)
+	_apply_status(_current, json.data)
 
 
-func _apply_status(data: Dictionary) -> void:
+func _apply_status(job: Dictionary, data: Dictionary) -> void:
+	var task = job["task"]
 	var status: String = data.get("status", "")
 
 	match status:
-		"starting", "preparing":
-			status_label.text = "Preparando..."
-			if data.has("total_chapters"):
-				status_label.text = "Encontrados %d capítulos." % data["total_chapters"]
+		"starting":
+			task.set_state("preparando...", COLOR_ACTIVE)
+
+		"preparing":
+			if data.has("title"):
+				task.set_title(data["title"])
+			var total := int(data.get("total_chapters", 0))
+			task.set_state("%d capítulos" % total, COLOR_ACTIVE)
 
 		"downloading":
-			progress_bar.value = data.get("progress", 0)
-			status_label.text = "Baixando cap %d de %d" % [
-				data.get("current_chapter", 0),
-				data.get("total_chapters", 0),
-			]
+			task.set_progress(data.get("progress", 0))
+			task.set_state("cap %d/%d" % [
+				int(data.get("current_chapter", 0)),
+				int(data.get("total_chapters", 0)),
+			], COLOR_ACTIVE)
 
 		"cooldown":
 			# Estado precioso: mostra que está esperando, não travado.
-			status_label.text = "Cooldown do site — aguardando %ds..." % data.get("wait_seconds", 0)
+			task.set_state("cooldown %ds..." % int(data.get("wait_seconds", 0)), COLOR_QUEUED)
 
 		"done":
-			progress_bar.value = 100
-			status_label.text = "Concluído! %d capítulos em %s" % [
-				data.get("done", 0),
-				data.get("output_path", ""),
-			]
-			_finish_download()
+			task.set_progress(100)
+			task.set_state("concluído (%d cap)" % int(data.get("done", 0)), COLOR_DONE)
+			task.disable_cancel()
+			_finish_current()
 
 		"error":
-			status_label.text = "Erro: %s" % data.get("message", "desconhecido")
-			_finish_download()
+			task.set_state("erro: %s" % data.get("message", "desconhecido"), COLOR_ERROR)
+			task.disable_cancel()
+			_finish_current()
 
 		"cancelled":
-			status_label.text = "Cancelado."
-			_finish_download()
+			task.set_state("cancelado", COLOR_ERROR)
+			task.disable_cancel()
+			_finish_current()
 
 
-func _finish_download() -> void:
-	poll_timer.stop()
-	download_button.disabled = false
-	current_pid = -1
+func _finish_current() -> void:
+	_poll_timer.stop()
+	_current = {}
+	_try_start_next()
 
 
 func _on_process_gone_without_status() -> void:
-	# O Python morreu sem escrever nem um status — provavelmente crash na
+	# O Python morreu sem escrever nem um status — provável crash na
 	# inicialização (venv errada, import faltando, etc.).
-	poll_timer.stop()
-	download_button.disabled = false
-	current_pid = -1
-	status_label.text = "O processo encerrou sem gerar status. Rode o script no terminal pra ver o erro."
-	push_error("Processo Python encerrou sem escrever status.json")
+	if not _current.is_empty():
+		_current["task"].set_state("encerrou sem status", COLOR_ERROR)
+		_current["task"].disable_cancel()
+	push_error("Processo Python encerrou sem escrever status. Rode no terminal pra ver o erro.")
+	_finish_current()
+
+
+## Chamado quando o usuário clica no X de um card. Se o job está rodando, mata o
+## processo; se está só esperando na fila, remove o card e descarta o job.
+func _on_cancel_requested(task: Node) -> void:
+	# Caso 1: é o job que está rodando agora.
+	if not _current.is_empty() and _current["task"] == task:
+		if _current["pid"] != -1 and OS.is_process_running(_current["pid"]):
+			OS.kill(_current["pid"])
+		task.set_state("cancelado", COLOR_ERROR)
+		task.disable_cancel()
+		_finish_current()
+		return
+
+	# Caso 2: é um job ainda na fila (não iniciado). Remove e libera o card.
+	for i in range(_queue.size()):
+		if _queue[i]["task"] == task:
+			_queue.remove_at(i)
+			task.queue_free()
+			_set_status("Removido da fila.")
+			return
+
+
+## Encurta a URL pra um nome provisório legível no card até o título real chegar.
+func _short_url(url: String) -> String:
+	var trimmed := url.trim_suffix("/")
+	var last := trimmed.get_slice("/", trimmed.get_slice_count("/") - 1)
+	return last if last != "" else url
+
+
+func _set_status(text: String) -> void:
+	if status_label:
+		status_label.text = text
