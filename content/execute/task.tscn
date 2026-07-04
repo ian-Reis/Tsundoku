@@ -1,0 +1,82 @@
+[gd_scene format=3 uid="uid://dpuphfslhv4ew"]
+
+[ext_resource type="FontFile" uid="uid://doh8gfprvwqot" path="res://content/fonts/JetBrainsMono-Medium.ttf" id="1_c5odg"]
+[ext_resource type="Script" uid="uid://c1euldrl5tl17" path="res://content/execute/task.gd" id="1_ty30k"]
+[ext_resource type="Texture2D" uid="uid://bjtvlyunljhdt" path="res://content/icons/book-svgrepo-com.svg" id="2_ty30k"]
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_yf5fn"]
+bg_color = Color(0, 0, 0, 0.27058825)
+corner_radius_top_left = 10
+corner_radius_top_right = 10
+corner_radius_bottom_right = 10
+corner_radius_bottom_left = 10
+
+[sub_resource type="LabelSettings" id="LabelSettings_ty30k"]
+font = ExtResource("1_c5odg")
+
+[sub_resource type="FontVariation" id="FontVariation_tyn8y"]
+base_font = ExtResource("1_c5odg")
+
+[sub_resource type="FontVariation" id="FontVariation_rbqig"]
+base_font = ExtResource("1_c5odg")
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_vn6xp"]
+bg_color = Color(0, 0, 0, 0.20784314)
+corner_radius_top_left = 10
+corner_radius_top_right = 10
+corner_radius_bottom_right = 10
+corner_radius_bottom_left = 10
+
+[node name="Task" type="Panel" unique_id=957102212]
+custom_minimum_size = Vector2(500, 60)
+theme_override_styles/panel = SubResource("StyleBoxFlat_yf5fn")
+script = ExtResource("1_ty30k")
+
+[node name="IconTextureRect" type="TextureRect" parent="." unique_id=2109044995]
+modulate = Color(1, 1, 1, 0.2)
+texture_filter = 6
+layout_mode = 0
+offset_right = 50.0
+offset_bottom = 60.0
+texture = ExtResource("2_ty30k")
+expand_mode = 1
+
+[node name="VBoxContainer" type="VBoxContainer" parent="." unique_id=1447752131]
+layout_mode = 1
+anchors_preset = -1
+anchor_left = 0.08232444
+anchor_top = 0.05
+anchor_right = 0.8970944
+anchor_bottom = 0.9166667
+grow_horizontal = 2
+grow_vertical = 2
+
+[node name="NameLabel" type="Label" parent="VBoxContainer" unique_id=1739451967]
+unique_name_in_owner = true
+layout_mode = 2
+text = "Mushoku Tensei"
+label_settings = SubResource("LabelSettings_ty30k")
+horizontal_alignment = 1
+clip_text = true
+text_overrun_behavior = 5
+
+[node name="ProgressBar" type="ProgressBar" parent="VBoxContainer" unique_id=2060876960]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(400, 0)
+layout_mode = 2
+size_flags_vertical = 10
+theme_override_fonts/font = SubResource("FontVariation_tyn8y")
+
+[node name="CancelButton" type="Button" parent="." unique_id=1848689449]
+unique_name_in_owner = true
+layout_mode = 1
+anchors_preset = -1
+anchor_left = 0.918
+anchor_top = 0.21666667
+anchor_right = 0.982
+anchor_bottom = 0.8
+grow_horizontal = 0
+grow_vertical = 2
+theme_override_fonts/font = SubResource("FontVariation_rbqig")
+theme_override_styles/normal = SubResource("StyleBoxFlat_vn6xp")
+text = "X"
