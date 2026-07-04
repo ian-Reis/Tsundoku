@@ -17,9 +17,12 @@ extends Control
 
 const TASK: PackedScene = preload("res://content/execute/task.tscn")
 
-# Índices do OptionButton (Novel / Mangá).
+# Índices do OptionButton. Novel e Mangá usam scrapers próprios; "Mangá (AIO)"
+# usa o AIO-Webtoon-Downloader (via wrapper), que cobre sites diferentes.
 const TYPE_NOVEL := 0
 const TYPE_MANGA := 1
+const TYPE_AIO := 2
+const TYPE_MANGADEX := 3
 
 # Usado quando o campo de capítulos fica vazio: baixa a série inteira.
 const DEFAULT_CHAPTERS := "all"
@@ -35,7 +38,12 @@ const COLOR_ERROR := Color(0.95, 0.5, 0.5)      # vermelho — erro/cancelado
 var runtime_dir: String = ProjectSettings.globalize_path("res://content/runtime")
 var python_exe: String = runtime_dir.path_join(".venv/Scripts/python.exe")
 var script_novel: String = runtime_dir.path_join("centralnovel_dlv7.py")
-var script_manga: String = runtime_dir.path_join("manga_dl.py")  # ainda não existe
+var script_manga: String = runtime_dir.path_join("mangalivre_dlv4.py")
+var script_mangadex: String = runtime_dir.path_join("mangadex_dl.py")
+# AIO roda via wrapper (stdlib) chamado pela nossa venv, mas o aio-dl.py em si
+# precisa da venv própria dele (deps pesadas — ver README).
+var script_aio: String = runtime_dir.path_join("aio_dl_wrapper.py")
+var aio_python: String = runtime_dir.path_join("aio/.venv/Scripts/python.exe")
 var temp_dir: String = runtime_dir.path_join("temp")
 var output_dir: String = runtime_dir.path_join("downloads")
 
@@ -66,6 +74,12 @@ func _on_download_pressed() -> void:
 	var type := option_button.selected
 	if type == TYPE_MANGA and not FileAccess.file_exists(script_manga):
 		_set_status("Download de mangá ainda não implementado.")
+		return
+	if type == TYPE_AIO and not FileAccess.file_exists(script_aio):
+		_set_status("Wrapper do AIO não encontrado (aio_dl_wrapper.py).")
+		return
+	if type == TYPE_MANGADEX and not FileAccess.file_exists(script_mangadex):
+		_set_status("Script do MangaDex não encontrado (mangadex_dl.py).")
 		return
 
 	# Campos opcionais. Capítulos vazio = série inteira; volumes vazio = omitido.
@@ -127,7 +141,13 @@ func _start_job(job: Dictionary) -> void:
 	# Python podem chegar mascarados.
 	OS.set_environment("PYTHONUTF8", "1")
 
-	var script: String = script_novel if job["type"] == TYPE_NOVEL else script_manga
+	var script: String
+	match job["type"]:
+		TYPE_NOVEL:    script = script_novel
+		TYPE_AIO:      script = script_aio
+		TYPE_MANGADEX: script = script_mangadex
+		_:             script = script_manga
+
 	var args := [
 		script,
 		job["url"],
@@ -135,10 +155,14 @@ func _start_job(job: Dictionary) -> void:
 		"--output", output_dir,
 		"--status-file", job["status_file"],
 	]
-	# --volumes é opcional; só passa se o usuário preencheu.
-	if job["volumes"] != "":
+	# --volumes é opcional e SÓ existe no script de novel (mangá/AIO não têm).
+	if job["type"] == TYPE_NOVEL and job["volumes"] != "":
 		args.append("--volumes")
 		args.append(job["volumes"])
+	# O wrapper do AIO precisa saber qual Python roda o aio-dl.py (venv própria).
+	if job["type"] == TYPE_AIO:
+		args.append("--aio-python")
+		args.append(aio_python)
 
 	# create_process NÃO bloqueia — retorna o PID e o Python roda em paralelo.
 	job["pid"] = OS.create_process(python_exe, args)
