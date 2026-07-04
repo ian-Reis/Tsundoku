@@ -1,3 +1,26 @@
 # Godot 4+ specific ignores
 .godot/
 /android/
+/ios/
+/web/
+/windows/
+/linux/
+/macos/
+
+# Import & uid backups
+*.tres~
+*.tscn~
+*.uid~
+
+# Translation
+*.translation
+
+# Downloads (user content)
+content/runtime/downloads/
+
+# Temp files
+content/runtime/temp/
+
+# OS metadata
+.DS_Store
+Thumbs.db
