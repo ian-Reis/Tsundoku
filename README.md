@@ -8,6 +8,7 @@ orquestra ferramentas de linha de comando em **Python** que fazem o trabalho
 pesado (scraping, download e merge dos capítulos).
 
 ---
+<img width="1296" height="861" alt="Screenshot 2026-07-04 184013" src="https://github.com/user-attachments/assets/8843a495-7d8b-48eb-850c-fa875c0de8d9" />
 
 ## ✨ Recursos
 
