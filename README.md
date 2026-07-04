@@ -36,12 +36,17 @@ o Python escreve o progresso de forma atômica (`.tmp` + `os.replace`) e o Godot
 leituras parciais.
 
 ```
-┌─────────────────┐   create_process    ┌──────────────────────┐
-│   Godot (UI)    │ ──────────────────► │  Python (venv)       │
-│                 │                      │  centralnovel_dl.py  │
-│  fila de jobs   │ ◄─── status.json ─── │  manga_dl.py         │
-│  polling 0.3s   │     (polling)        │  chapterbind.py      │
-└─────────────────┘                      └──────────────────────┘
+┌─────────────────┐   create_process    ┌────────────────────────┐
+│   Godot (UI)    │ ──────────────────► │  Python (venv)         │
+│                 │                      │  centralnovel_dlv7.py  │
+│  fila de jobs   │ ◄─── status.json ─── │  mangalivre_dlv4.py    │
+│  polling 0.3s   │     (polling)        │  aio_dl_wrapper.py ──┐ │
+└─────────────────┘                      └──────────────────────┼─┘
+																 │ stdout
+														  ┌──────▼───────┐
+														  │ aio/aio-dl.py│
+														  │ (venv própria)│
+														  └──────────────┘
 ```
 
 ### Contrato de status (protocolo Python ↔ Godot)
@@ -72,7 +77,9 @@ tsundoku/                        # sem caracteres não-ASCII no caminho (ver Not
 │  └─ runtime/                   # o "back-end" Python
 │     ├─ .venv/                  # venv: playwright, bs4, curl_cffi, requests…
 │     ├─ centralnovel_dlv7.py    # downloader de light novels
-│     ├─ manga_dl.py             # downloader de mangá (em integração)
+│     ├─ mangalivre_dlv4.py      # downloader de mangá (mangalivre.to e afins)
+│     ├─ aio_dl_wrapper.py       # ponte: traduz o stdout do AIO → status.json
+│     ├─ aio/                    # AIO-Webtoon-Downloader (3rd-party, venv própria)
 │     ├─ chapterbind.py          # merge → EPUB/CBZ/PDF (em integração)
 │     ├─ downloads/              # saída
 │     └─ temp/status_*.json      # arquivos de progresso lidos pelo Godot
@@ -98,13 +105,35 @@ python -m venv .venv
 
 No Linux, troque `Scripts/` por `bin/` e rode também `playwright install-deps chromium`.
 
+### Fonte "Mangá (AIO)" — venv separada
+
+O **AIO-Webtoon-Downloader** (`content/runtime/aio/`) é uma ferramenta de
+terceiros com dependências pesadas (patchright, curl_cffi, pyvips, fastapi,
+numpy…), várias delas trabalhosas no Windows. Por isso ele roda numa **venv
+própria**, isolada da venv enxuta do Tsundoku:
+
+```bash
+cd content/runtime/aio
+python -m venv .venv
+.venv/Scripts/python.exe -m pip install -r requirements.txt
+```
+
+O Godot chama o `aio_dl_wrapper.py` (que só usa stdlib) pela venv do Tsundoku, e
+o wrapper spawna o `aio-dl.py` pela venv do AIO (`--aio-python`). O wrapper lê o
+stdout do AIO e o traduz para o mesmo `status.json` dos outros downloaders.
+
+> ⚠️ **Cancelar um job do AIO** mata o wrapper, mas em kill "duro" no Windows o
+> `aio-dl.py` filho pode continuar rodando órfão. Fix planejado: derrubar a
+> árvore de processos (`taskkill /T` / process group). Dado o peso das deps, o
+> AIO tende a rodar melhor no Linux (onde já funciona nativamente).
+
 ### Rodar
 
 Abra o projeto no Godot e execute a cena principal. Para testar um script isolado:
 
 ```bash
 .venv/Scripts/python.exe centralnovel_dlv7.py "<url>" \
-    --chapters 1-40 --output downloads --status-file temp/status.json
+	--chapters 1-40 --output downloads --status-file temp/status.json
 ```
 
 ---
@@ -114,8 +143,10 @@ Abra o projeto no Godot e execute a cena principal. Para testar um script isolad
 | Componente             | Estado                                                    |
 |------------------------|-----------------------------------------------------------|
 | `centralnovel_dlv7.py` | ✅ Pronto — validado ponta a ponta                        |
-| Fila / UI (Godot)      | ✅ Fila, progresso, volumes/capítulos e cancelamento       |
-| `manga_dl.py`          | 🚧 Falta integrar status-file + encoding                  |
+| `mangalivre_dlv4.py`   | ✅ Integrado — status-file + encoding + fila               |
+| `mangadex_dl.py`       | ✅ Integrado — usa a venv enxuta (só requests)             |
+| `aio_dl_wrapper.py`    | ✅ Wrapper pronto — falta criar a venv do AIO e validar    |
+| Fila / UI (Godot)      | ✅ Fila (4 fontes), progresso, volumes/caps e cancelamento |
 | `chapterbind.py`       | 🚧 Falta integrar (estado extra de "escrevendo arquivo")  |
 | Pipeline encadeado     | 📋 Planejado — disparar o merge após o download            |
 
