@@ -91,8 +91,9 @@ tsundoku/                        # sem caracteres não-ASCII no caminho (ver Not
 │     ├─ aio_dl_wrapper.py       # ponte: traduz o stdout do AIO → status.json
 │     ├─ aio/                    # AIO-Webtoon-Downloader (3rd-party, venv própria)
 │     ├─ chapterbind.py          # merge → EPUB/CBZ/PDF (em integração)
-│     ├─ downloads/              # saída
 │     └─ temp/status_*.json      # arquivos de progresso lidos pelo Godot
+│  └─ downloads/                 # saída, AO LADO de runtime/ (não dentro)
+│     ├─ centralnovel/  ·  mangalivre/  ·  mangafire/  ·  mangadex/
 └─ project.godot
 ```
 
@@ -104,7 +105,19 @@ tsundoku/                        # sem caracteres não-ASCII no caminho (ver Not
 - [Godot 4.7+](https://godotengine.org/) (GDScript, sem .NET)
 - Python 3.10+
 
-### Ambiente Python (uma vez)
+### Instalador in-app (Windows, recomendado pro usuário final)
+
+No build exportado, se o runtime Python não existir, a tela mostra **"Instalar
+runtime"**. Um clique baixa um **Python embeddable** autocontido (via
+`powershell.exe`, sem precisar de Python pré-instalado), instala pip + as
+dependências e o Chromium do Playwright — tudo dentro de `runtime/`, com barra de
+progresso. O `Paths.gd` detecta o `runtime/python/` automaticamente.
+
+Por baixo é o [content/runtime/setup_embed.ps1](content/runtime/setup_embed.ps1),
+que também roda à mão: `powershell -ExecutionPolicy Bypass -File setup_embed.ps1`
+(ou `-Aio` de dentro pra montar o embeddable pesado do AIO).
+
+### Ambiente Python de desenvolvimento (uma vez)
 
 ```bash
 cd content/runtime
