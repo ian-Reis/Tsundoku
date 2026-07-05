@@ -119,6 +119,13 @@ def main() -> int:
         print(f"[wrapper] aio-dl.py não encontrado: {AIO_SCRIPT}", file=sys.stderr)
         return 1
 
+    # O AIO tem ambiente Python PRÓPRIO (deps pesadas), separado do runtime enxuto.
+    # Se não foi instalado, dá uma mensagem clara em vez do críptico WinError 2.
+    if not os.path.exists(args.aio_python):
+        reporter.write("error", message="runtime do AIO/MangaFire não instalado (rode setup_embed.ps1 -Aio)")
+        print(f"[wrapper] Python do AIO não encontrado: {args.aio_python}", file=sys.stderr)
+        return 1
+
     reporter.write("starting", url=args.url)
 
     cmd = [
