@@ -1,0 +1,28 @@
+[gd_scene load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://content/library/library_item.gd" id="1_li"]
+
+[node name="LibraryItem" type="HBoxContainer"]
+theme_override_constants/separation = 12
+script = ExtResource("1_li")
+
+[node name="Cover" type="TextureRect" parent="."]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(120, 170)
+layout_mode = 2
+expand_mode = 1
+stretch_mode = 5
+
+[node name="Col" type="VBoxContainer" parent="."]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_constants/separation = 6
+
+[node name="TitleLabel" type="Label" parent="Col"]
+unique_name_in_owner = true
+layout_mode = 2
+text = "Título"
+
+[node name="ChaptersFlow" type="HFlowContainer" parent="Col"]
+unique_name_in_owner = true
+layout_mode = 2
