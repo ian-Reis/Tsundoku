@@ -391,11 +391,19 @@ def _sanitize_folder_component(name: str) -> str:
 def allocate_series_output_dir(title: str, hid: str, root: str = DEFAULT_OUTPUT_DIR) -> str:
     """Choose a per-series output folder.
 
-    Normally uses: root/<title>
-    If that folder is already claimed by a different hid (or looks non-empty with unknown hid),
-    uses: root/<title> (hid=<hid>)
+    Normally uses: root/<title>. Falls back to root/<title> (hid=<hid>) only on
+    a genuine collision: a DIFFERENT series with the same title that already has
+    downloaded content.
 
-    A hidden marker file stores the hid so multiple runs and multiple processes stay consistent.
+    A hidden marker file (.series_hid) stores the hid so multiple runs and
+    processes stay consistent. Matching is hash-tolerant: a marker is reused
+    when it equals the hid, or equals it after stripping a rotating hash suffix
+    (so the stabilized asura hid maps onto folders downloaded with the old
+    full-slug hid). An EMPTY existing folder is always reclaimed, even when a
+    stale marker points at a different hid — this prevents the empty orphan
+    folders left when a run crashes after allocation but before any chapter is
+    written and the next attempt carries a different hid. See _marker_matches
+    and the reclaim branch below.
     """
     clean_title = re.sub(r"\s*\(hid=[^)]+\)\s*$", "", str(title or "")).strip() or "comic"
     base = _sanitize_folder_component(clean_title)
@@ -416,23 +424,61 @@ def allocate_series_output_dir(title: str, hid: str, root: str = DEFAULT_OUTPUT_
     def _write_marker(folder: str):
         write_hid_marker(folder, str(hid))
 
+    def _strip_rotating_suffix(value: str) -> str:
+        # Asura (and similar) bake a rotating hex hash into the slug they use
+        # as the hid: "sss-class-suicide-hunter-46f09241". The asura handler
+        # now stabilizes the hid by stripping that hash, but folders downloaded
+        # before the fix are still marked with the OLD full-slug hid. Reduce
+        # both to a hash-free base so a stabilized hid maps onto the existing
+        # folder. Non-rotating hids (comick short ids, mangadex UUIDs whose
+        # groups never change) only reach here when existing != want, which
+        # for stable hids never happens — so this is effectively asura-only.
+        return re.sub(r"-[0-9a-f]{6,}$", "", str(value or ""))
+
+    def _marker_matches(existing: "str | None", want: str) -> bool:
+        # True when the folder belongs to this series. Exact match, or equal
+        # once a rotating hash suffix is stripped from both sides (migration
+        # for the stabilized asura hid). Require a non-empty base so two
+        # unrelated markers can't both collapse to "" and false-match.
+        if existing is None:
+            return False
+        if existing == str(want):
+            return True
+        base_existing = _strip_rotating_suffix(existing)
+        return bool(base_existing) and base_existing == _strip_rotating_suffix(str(want))
+
     with _AIOFileLock(lock_path):
         preferred = os.path.join(root, base)
         if os.path.exists(preferred):
             existing = _read_marker(preferred)
-            if existing == str(hid):
+            if _marker_matches(existing, hid):
+                # Converge the marker onto the current (canonical) hid so a
+                # stabilized hid is treated as an exact match next run.
+                if existing != str(hid):
+                    _write_marker(preferred)
                 return preferred
-            # If unclaimed AND empty-ish, claim it.
-            if existing is None and not _folder_nonempty(preferred):
+            # Empty folder: reclaim regardless of any stale marker — there is
+            # no downloaded content to protect. This is what kills the empty
+            # orphan folders left when a run crashes AFTER folder allocation
+            # (which eagerly writes .series_hid) but BEFORE any chapter is
+            # written, and the next attempt carries a different hid (asura
+            # slug rotation, or re-picking the series from another source).
+            # Pre-fix this branch required `existing is None`, so a stale
+            # marker forced a "(hid=...)" sibling and orphaned the empty bare
+            # folder. (grep: orphan bare folders)
+            if not _folder_nonempty(preferred):
                 _write_marker(preferred)
                 return preferred
-            # Otherwise collision: add hid suffix.
+            # Otherwise a genuine collision: a DIFFERENT series with the same
+            # title AND real downloaded content. Disambiguate with a suffix.
             candidate_base = _sanitize_folder_component(f"{clean_title} (hid={hid})")
             candidate = os.path.join(root, candidate_base)
             k = 2
             while os.path.exists(candidate):
                 ex = _read_marker(candidate)
-                if ex == str(hid):
+                if _marker_matches(ex, hid):
+                    if ex != str(hid):
+                        _write_marker(candidate)
                     return candidate
                 candidate = os.path.join(root, f"{candidate_base} ({k})")
                 k += 1
@@ -2903,6 +2949,298 @@ def recompress_chapter_images_to_webp(
 
 
 # -----------------------------------------------------------
+# Content-aware JXL/AVIF recompression (opt-in via --modernize)
+# -----------------------------------------------------------
+# Structural twin of recompress_chapter_images_to_webp (above): same cpu//2
+# ThreadPool, same write-temp-then-os.remove-original atomicity, same broad-
+# catch keep-original-on-failure. Differences:
+#   * Content-aware per-page routing: B&W line art -> JXL, color -> AVIF.
+#     Routing is a SIZE decision ONLY — we never convert("L") (empirically 0%
+#     gain at distance 1.0, since libjxl already zeroes imperceptible chroma,
+#     and it would be the one irreversible op), so a misroute costs bytes,
+#     never pixels.
+#   * A per-page min_saving guard: adopt the new file only if it's smaller than
+#     orig*min_saving, else keep the original byte-for-byte. Never bloats, and
+#     self-corrects a gray->AVIF misroute (AVIF on line art is ~95% of source,
+#     above the 0.92 guard, so the original is kept).
+#   * Skips WEBP/AVIF/GIF/JXL sources (already efficient / animated / already
+#     modern) so re-runs are idempotent.
+# Cross-file: gated call site at the top of the `if raw_image_paths:` block in
+# the chapter pipeline (grep 'recompress_chapter_images_modern('), which runs
+# BEFORE cbz_fast_path so the new bytes flow straight into build_cbz with
+# correct per-file extensions (build_cbz arcname preserves splitext, ~line
+# 3389). --modernize is hard-gated at parse time to the CBZ byte-passthrough
+# fast-path (grep '--modernize compatibility checks'): every fast-path-
+# disabling flag is a p.error(), because the slow save_final_images path only
+# understands WEBP/JPEG and would re-encode .jxl/.avif to PNG. Resume: the
+# --modernize* dests are in _RESUME_GATING_DESTS so changing them re-transcodes.
+
+# Pages larger than this in either dimension route to JXL regardless of color:
+# AVIF encodes them fine but its on-device (Android) decode at extreme heights
+# (long-strip webtoons up to ~15000px) is unverified, and JXL ties AVIF on size
+# for tall strips while decoding large dimensions more robustly. Under an
+# avif-only policy the user opted out of JXL, so oversized pages are skipped
+# (original kept) instead of emitting an unasked-for format.
+_MODERNIZE_MAX_DIM = 8192
+
+# Source formats with no re-encode headroom (already efficient, animated, or
+# already a modern codec). Matched against PIL's reported Image.format.
+_MODERN_SKIP_FORMATS = frozenset({"WEBP", "AVIF", "GIF", "JXL"})
+
+# In strict-lossless mode (--modernize-distance 0.0) pillow_jxl does our
+# intended bit-exact JPEG->JXL reconstruction and warns once per page
+# suggesting lossless_jpeg — pure noise, since reconstruction is exactly what
+# we want there. Silence that one specific message process-wide. Set at import
+# (not in recompress_chapter_images_modern, which would re-append to the global
+# filter list every chapter) and only matches our own JXL save, so nothing else
+# is affected. The lossy default path passes lossless_jpeg=False and never
+# triggers it. Grep 'lossless_jpeg' for the matching save site.
+import warnings as _warnings  # noqa: E402
+
+_warnings.filterwarnings(
+    "ignore", message="Using JPEG reconstruction", category=UserWarning
+)
+
+
+def _page_is_grayscale(im, chroma_thresh: int = 16, area_frac: float = 0.005) -> bool:
+    """True if a page should route to JXL (grayscale) vs AVIF (color).
+
+    ROUTING ONLY — never a pixel decision. Because recompress_chapter_images_
+    modern never reduces a page to mode L, a wrong verdict here only changes
+    which codec is tried (a size trade-off), never destroys color.
+
+    Full-resolution colored-area fraction, not a downscaled probe: a small but
+    real color element (e.g. a 5%-area panel) survives at full res but gets
+    averaged away by a 20x20 thumbnail — which is why we do NOT reuse
+    sites.search_orchestrator._is_grayscale_pil (its p90/thumbnail probe was
+    built for whole-series classification, not per-page color preservation, and
+    importing it would couple this hot path to the search/ML module). Counting
+    the fraction of pixels whose channel spread exceeds chroma_thresh is robust
+    to JPEG chroma ringing on B&W scans (low-amplitude, sub-threshold) yet
+    catches genuine local color. Thresholds are starting points — tune against
+    the real library if routing drifts (grep '_page_is_grayscale').
+    """
+    if getattr(im, "mode", None) in ("L", "LA", "1"):
+        return True
+    import numpy as np  # hard dep (requirements.txt); lazy like _is_grayscale_pil
+    arr = np.asarray(im.convert("RGB"), dtype=np.int16)
+    chroma = arr.max(axis=2) - arr.min(axis=2)  # per-pixel max channel spread
+    return float((chroma > chroma_thresh).mean()) < area_frac
+
+
+def recompress_chapter_images_modern(
+    raw_paths: List[str],
+    *,
+    policy: str,
+    gray_quality: float,
+    color_quality: int,
+    min_saving: float,
+    effort: int = 7,
+) -> List[str]:
+    """Content-aware transcode of JPEG/PNG pages to JXL (B&W) / AVIF (color).
+
+    Opt-in via --modernize. ``policy``: "auto" (JXL for gray, AVIF for color) |
+    "jxl" | "avif" | "jxl+avif" (encode both, keep the smaller). ``gray_quality``
+    is the JXL distance (1.0 ~ visually lossless; 0.0 selects JXL lossless
+    mode); ``color_quality`` is the AVIF quality (90 default; 85 aggressive).
+    ``min_saving`` is the keep-threshold: the new file replaces the original
+    only if its size < orig_size * min_saving, else the original is kept
+    byte-for-byte (so already-dense pages are auto-skipped and nothing bloats).
+
+    Returns the per-slot path list (new .jxl/.avif where it helped, otherwise
+    the unchanged original path), matching recompress_chapter_images_to_webp's
+    contract — the caller reassigns raw_image_paths to it. See the section
+    header above for the routing/guard rationale and the fast-path coupling.
+    """
+    if not raw_paths:
+        return list(raw_paths)
+
+    # JXL is an optional plugin (pillow-jxl-plugin); importing it registers the
+    # encoder in PIL.Image.SAVE. AVIF is native in Pillow >= 12. --modernize is
+    # validated at parse time (grep '--modernize compatibility checks') so both
+    # are present in the normal flow; the try/except keeps the function callable
+    # from tests when JXL isn't installed (a missing-encoder save then fails
+    # per-page and the original is kept).
+    if policy != "avif":
+        try:
+            import pillow_jxl  # noqa: F401
+        except ImportError:
+            pass
+    if policy != "jxl":
+        # AVIF is native in Pillow >= 12; the pillow-avif-plugin fallback for
+        # older Pillow only registers on import (Image.init() won't trigger it).
+        # Best-effort so an avif/auto/jxl+avif policy works on pre-12 Pillow too,
+        # mirroring the pillow_jxl import and the parse-time gate (grep
+        # 'import pillow_avif'). Missing -> the AVIF save fails per-page and the
+        # original is kept (broad catch in _convert_one).
+        try:
+            import pillow_avif  # noqa: F401
+        except ImportError:
+            pass
+    # Register plugins once, single-threaded, before the worker pool starts.
+    # The native AVIF plugin registers lazily on first save; letting parallel
+    # workers trigger that registration concurrently is a data race. Idempotent.
+    Image.init()
+
+    def _pick_target(im, w: int, h: int) -> str:
+        if max(w, h) > _MODERNIZE_MAX_DIM:
+            return "jxl" if policy != "avif" else "skip"
+        if policy == "jxl":
+            return "jxl"
+        if policy == "avif":
+            return "avif"
+        if policy == "jxl+avif":
+            return "both"
+        return "jxl" if _page_is_grayscale(im) else "avif"  # auto
+
+    def _convert_one(entry: Tuple[int, str]) -> Tuple[int, str]:
+        idx, src = entry
+        base, _ = os.path.splitext(src)
+        try:
+            orig_size = os.path.getsize(src)
+            with Image.open(src) as im:
+                src_fmt = (im.format or "").upper()
+                if src_fmt in _MODERN_SKIP_FORMATS:
+                    return idx, src
+                w, h = im.size
+                target = _pick_target(im, w, h)
+                if target == "skip":
+                    return idx, src
+                candidates: List[Tuple[int, str]] = []
+                if target in ("jxl", "both"):
+                    jxl_path = base + ".jxl"
+                    # Encode as-is (no convert("L") — see header). Keep alpha-
+                    # capable modes (JXL carries alpha); map paletted
+                    # transparency to RGBA so palette alpha isn't flattened; only
+                    # widen truly exotic modes pillow_jxl can't take (opaque P /
+                    # CMYK / I / ...) to RGB. Mirrors the AVIF branch's no-flatten
+                    # rule (grep 'AVIF carries alpha').
+                    if im.mode in ("L", "LA", "RGB", "RGBA"):
+                        jxl_src = im
+                    elif im.mode == "PA" or (
+                        im.mode == "P" and "transparency" in im.info
+                    ):
+                        jxl_src = im.convert("RGBA")
+                    else:
+                        jxl_src = im.convert("RGB")
+                    # JPEG quirk (measured on file-based sources, which is all
+                    # we get): pillow_jxl's default lossless_jpeg=True does
+                    # bit-exact JPEG *reconstruction* and SILENTLY IGNORES
+                    # distance (~78%, diff=0, and warns). So:
+                    #   * lossy/visually-lossless default -> force
+                    #     lossless_jpeg=False so --modernize-distance actually
+                    #     applies (58%, diff>0, no warning).
+                    #   * gray_quality == 0.0 (strict lossless) -> KEEP the
+                    #     default: lossless=True then gives bit-exact JPEG->JXL
+                    #     reconstruction (~78%) for JPEG and pixel-lossless for
+                    #     PNG automatically — exactly the two lossless tiers, no
+                    #     external cjxl needed. (PNG/other sources ignore
+                    #     lossless_jpeg either way.)
+                    jxl_src.save(
+                        jxl_path,
+                        format="JXL",
+                        effort=effort,
+                        **({"lossless": True} if gray_quality == 0.0
+                           else {"distance": gray_quality, "lossless_jpeg": False}),
+                    )
+                    candidates.append((os.path.getsize(jxl_path), jxl_path))
+                if target in ("avif", "both"):
+                    avif_path = base + ".avif"
+                    # AVIF carries alpha — never flatten it. The CBZ byte-
+                    # passthrough fast path this rides preserved the original PNG,
+                    # so a transparent page (RGBA / LA / paletted-transparency)
+                    # must stay transparent; converting it to RGB here would make
+                    # the background opaque. Map every alpha-bearing source to
+                    # RGBA and widen the rest (L / opaque-P / CMYK / ...) to RGB.
+                    # Grayscale color-routed pages are rare (auto sends B&W to
+                    # JXL), so the L->RGB widening only bites forced
+                    # --modernize-format avif / jxl+avif.
+                    if im.mode == "RGB":
+                        avif_src = im
+                    elif im.mode in ("RGBA", "LA", "PA") or (
+                        im.mode == "P" and "transparency" in im.info
+                    ):
+                        avif_src = im.convert("RGBA")
+                    else:
+                        avif_src = im.convert("RGB")
+                    avif_src.save(
+                        avif_path, format="AVIF", quality=color_quality, speed=6
+                    )
+                    candidates.append((os.path.getsize(avif_path), avif_path))
+        except Exception as e:
+            # Corrupt page, missing encoder, DecompressionBomb, etc. Keep the
+            # original; clean up any partial temp. One bad page never aborts the
+            # chapter (mirrors the webp fn's broad catch at ~line 2894).
+            log_verbose(
+                f"  Warning: modernize transcode failed for "
+                f"{os.path.basename(src)}: {e}. Keeping original."
+            )
+            for _ext in (".jxl", ".avif"):
+                try:
+                    os.remove(base + _ext)
+                except OSError:
+                    pass
+            return idx, src
+
+        # Pick the smallest candidate; discard the rest (jxl+avif loser).
+        candidates.sort(key=lambda c: c[0])
+        best_size, best_path = candidates[0]
+        for _sz, loser in candidates[1:]:
+            try:
+                os.remove(loser)
+            except OSError:
+                pass
+        # Guard: adopt the new file only if it clears the savings threshold.
+        if best_size < orig_size * min_saving:
+            try:
+                os.remove(src)
+            except OSError as e:
+                # New file is fine; couldn't delete the original (AV / OneDrive
+                # lock). Leftover gets wiped on the next chapter-dir reset.
+                log_debug(
+                    f"    Modernize: kept original alongside "
+                    f"{os.path.splitext(best_path)[1]} ({e}): "
+                    f"{os.path.basename(src)}"
+                )
+            return idx, best_path
+        # Not enough headroom — drop the new file, keep the original bytes.
+        try:
+            os.remove(best_path)
+        except OSError:
+            pass
+        return idx, src
+
+    cpu = os.cpu_count() or 4
+    half_cores = max(1, cpu // 2)
+    workers = max(1, min(half_cores, len(raw_paths)))
+
+    out: List[Optional[str]] = [None] * len(raw_paths)
+    with _cpu_guard("recompress_modern"):
+        if workers == 1 or len(raw_paths) == 1:
+            for entry in enumerate(raw_paths):
+                idx, dst = _convert_one(entry)
+                out[idx] = dst
+                if idx % 8 == 0:
+                    _hb("cpu", f"modernize {idx+1}/{len(raw_paths)}")
+        else:
+            with ThreadPoolExecutor(
+                max_workers=workers, thread_name_prefix="modern-recompress"
+            ) as pool:
+                # JXL/AVIF native encoders generally release the GIL during the
+                # heavy encode (like libwebp/libjpeg), so workers translate to
+                # speedup; if a given pillow_jxl build holds the GIL the pool
+                # just serializes (correct, only slower). Part B uses processes.
+                for idx, dst in pool.map(
+                    _convert_one, list(enumerate(raw_paths))
+                ):
+                    out[idx] = dst
+                    if idx % 8 == 0:
+                        _hb("cpu", f"modernize {idx+1}/{len(raw_paths)}")
+
+    return [p for p in out if p is not None]
+
+
+# -----------------------------------------------------------
 # Builders (PDF, EPUB, CBZ)
 # -----------------------------------------------------------
 def _media(path: str):
@@ -3994,6 +4332,16 @@ _RESUME_GATING_DESTS = frozenset({
     # don't end up half-Komikku. See the cbz-cache creation block (grep
     # 'cached_cbz_path = os.path.join') for where this matters.
     "komikku",
+    # Content-aware JXL/AVIF transcode (--modernize, CBZ-only). Changing any of
+    # these re-routes or re-encodes pages, and the transcode DELETES the
+    # original JPEG/PNG bytes in place — so a resume with different settings
+    # must re-download + re-transcode (the on-disk .jxl/.avif no longer match
+    # the requested encoding). See recompress_chapter_images_modern().
+    "modernize",
+    "modernize_format",
+    "modernize_quality",
+    "modernize_distance",
+    "modernize_min_saving",
 })
 
 # Dests that must NEVER be persisted to run_params.json. Every other
@@ -4101,6 +4449,26 @@ def _save_download_params(out_dir: str, url: str, args, title: str) -> None:
         "metadata_source": str(getattr(args, "metadata_source", "none") or "none"),
         "metadata_tag_min_rank": int(getattr(args, "metadata_tag_min_rank", 50) or 50),
         "metadata_refresh": bool(getattr(args, "metadata_refresh", False)),
+        # Content-aware JXL/AVIF transcode (--modernize family). Persisted so
+        # --update-all child runs keep transcoding newly downloaded chapters;
+        # without this a series first grabbed with --save-params --modernize
+        # would get plain JPEG/PNG pages on every update, leaving the library
+        # half-modernized. Replay branch: _append_saved_update_options. NOTE: no
+        # `or` defaults on distance/min_saving — 0.0 distance (JXL lossless) is a
+        # valid value that `or` would silently clobber to the default.
+        "modernize": bool(getattr(args, "modernize", False)),
+        "modernize_format": str(getattr(args, "modernize_format", "auto") or "auto"),
+        "modernize_quality": int(getattr(args, "modernize_quality", 90) or 90),
+        "modernize_distance": float(
+            getattr(args, "modernize_distance", 1.0)
+            if getattr(args, "modernize_distance", 1.0) is not None
+            else 1.0
+        ),
+        "modernize_min_saving": float(
+            getattr(args, "modernize_min_saving", 0.92)
+            if getattr(args, "modernize_min_saving", 0.92) is not None
+            else 0.92
+        ),
     }
     if getattr(args, "format", None) == "epub":
         data["epub_layout"] = getattr(args, "epub_layout", "vertical")
@@ -4159,12 +4527,22 @@ def _append_saved_update_options(child_cmd: List[str], params: Dict[str, Any]) -
         child_cmd.extend(["--site", str(params["site"])])
     if params.get("epub_layout"):
         child_cmd.extend(["--epub-layout", str(params["epub_layout"])])
-    if params.get("width"):
+    # --modernize rides the CBZ byte-passthrough fast-path and HARD-errors at
+    # parse time on an explicit --width / --aspect-ratio / --quality (grep
+    # '--modernize compatibility checks'). When replaying a modernize series we
+    # must NOT re-emit those — the saved values are just the cbz defaults the
+    # original run never set explicitly (e.g. width=1500), and emitting them
+    # would flip the child's _user_set_* sentinels and make it self-reject. The
+    # original run required scaling==100, so the saved scaling is 100 and
+    # emitting it stays compatible.
+    _replay_modernize = bool(params.get("modernize"))
+    if params.get("width") and not _replay_modernize:
         child_cmd.extend(["--width", str(params["width"])])
-    if params.get("aspect_ratio"):
+    if params.get("aspect_ratio") and not _replay_modernize:
         child_cmd.extend(["--aspect-ratio", str(params["aspect_ratio"])])
     if not params.get("no_processing"):
-        child_cmd.extend(["--quality", str(params.get("quality", 85))])
+        if not _replay_modernize:
+            child_cmd.extend(["--quality", str(params.get("quality", 85))])
         child_cmd.extend(["--scaling", str(params.get("scaling", 100))])
     if params.get("cookies"):
         child_cmd.extend(["--cookies", str(params["cookies"])])
@@ -4210,6 +4588,29 @@ def _append_saved_update_options(child_cmd: List[str], params: Dict[str, Any]) -
         saved_rank = params.get("metadata_tag_min_rank")
         if isinstance(saved_rank, int) and saved_rank != 50:
             child_cmd.extend(["--metadata-tag-min-rank", str(saved_rank)])
+
+    # Content-aware JXL/AVIF transcode (--modernize family). Mirrors the
+    # metadata_source replay above: saved by _save_download_params, absent in
+    # older download_params.json (get → None → skipped, forward-compatible).
+    # Emit the master flag + only NON-default knobs (argparse defaults:
+    # format=auto, quality=90, distance=1.0, min-saving=0.92) to keep the spawn
+    # line clean. The child re-runs the parse-time compat checks; because the
+    # width/aspect/quality emissions above are suppressed under _replay_modernize
+    # and --format cbz / --scaling 100 are replayed, it satisfies the fast-path.
+    if _replay_modernize:
+        child_cmd.append("--modernize")
+        mfmt = params.get("modernize_format")
+        if mfmt and mfmt != "auto":
+            child_cmd.extend(["--modernize-format", str(mfmt)])
+        mq = params.get("modernize_quality")
+        if isinstance(mq, (int, float)) and int(mq) != 90:
+            child_cmd.extend(["--modernize-quality", str(int(mq))])
+        md = params.get("modernize_distance")
+        if isinstance(md, (int, float)) and float(md) != 1.0:
+            child_cmd.extend(["--modernize-distance", str(md)])
+        mms = params.get("modernize_min_saving")
+        if isinstance(mms, (int, float)) and float(mms) != 0.92:
+            child_cmd.extend(["--modernize-min-saving", str(mms)])
     if params.get("metadata_refresh"):
         child_cmd.append("--metadata-refresh")
 
@@ -5076,6 +5477,536 @@ def _consume_image_prefetch(chap_label: str) -> None:
         _image_prefetch_done.pop(chap_label, None)
 
 
+# ---------------------------------------------------------------------------
+# --refresh-library-metadata mode (in-place AniList re-enrichment)
+# ---------------------------------------------------------------------------
+# Repairs an existing library WITHOUT re-downloading images: re-pulls AniList
+# metadata for each already-downloaded series and rewrites details.json +
+# .aio_series.json (and optionally each CBZ's ComicInfo.xml). Exists because
+# the genre-normalization fix (external_metadata REPLACE semantics + the
+# mangakatana selector scoping, 2026-06-06) only affects FUTURE downloads;
+# series grabbed before the fix keep their 50+-tag taxonomy dumps on disk
+# until refreshed. Dispatched from main() right after --update-all.
+
+def _serialize_anilist_tag(t: Any) -> Dict[str, Any]:
+    """AnilistTag dataclass -> .aio_series.json tag dict.
+
+    Schema parity with the live-download writer (grep '_tag_to_dict' /
+    'anilist_tags' near series_meta). Duck-typed via getattr so a plain
+    dict already in the right shape would also pass through.
+    """
+    return {
+        "name": getattr(t, "name", "") or "",
+        "category": getattr(t, "category", "") or "",
+        "rank": int(getattr(t, "rank", 0) or 0),
+        "is_media_spoiler": bool(getattr(t, "is_media_spoiler", False)),
+        "is_general_spoiler": bool(getattr(t, "is_general_spoiler", False)),
+    }
+
+
+def _build_aio_reader_extras(
+    comic_data: Dict[str, Any],
+    *,
+    source_site: Optional[str],
+    source_url: Optional[str],
+    language: Optional[str],
+) -> Dict[str, Any]:
+    """Reader-facing enrichment block merged into details.json as flat,
+    top-level keys. Returns a dict the caller `.update()`s onto the Komikku
+    payload AFTER the six canonical keys, so those stay first on disk.
+
+    WHY this exists: details.json is the only metadata file a *reader*
+    (Komikku, or the user's own reader) actually reads. .aio_series.json is
+    internal bookkeeping — the update-checker chapter list + the cached
+    anilist_id fast path (grep _load_cached_anilist_id) — and no reader ever
+    opens it. So everything a reader might surface has to live in
+    details.json. Komikku parses details.json with kotlinx
+    Json{ignoreUnknownKeys=true} (verified: `git show 1f17a20^:komikkuspec.md`
+    §6.1 — "extra keys are tolerated"), so these extra keys are silently
+    dropped by Komikku and read by the user's reader; no namespacing needed
+    for Komikku-safety.
+
+    Key names deliberately dodge Komikku's reserved set
+    (title/author/artist/description/genre/status) AND the TachiyomiSY keys
+    Komikku currently ignores but could one day wire up
+    (url/lang/tags/categories/alt_titles/thumbnail_url): hence
+    source_url/source_site (not bare url/site) and anilist_tags (not tags).
+    The anilist_*/country_of_origin/media_format names mirror
+    .aio_series.json's schema (grep 'series_meta =') so the two on-disk files
+    stay name-consistent for anything that reads both. Rich-tag dict shape ==
+    _serialize_anilist_tag == ComicInfo <TagsExtended> (name/category/rank +
+    the two spoiler flags), so a reader can render spoiler-aware chips off
+    any of the three artifacts identically.
+
+    Every key is emitted unconditionally (null / [] / "" when enrichment was
+    off or found no confident match) so the reader can rely on a stable
+    schema. comic_data's anilist_tags/anilist_spoiler_tags are AnilistTag
+    dataclass instances in both call sites (set by enrich_from_anilist →
+    _apply_anilist_match); _serialize_anilist_tag is getattr-based so that
+    holds. Cross-file callers: the two details.json writers — live-download
+    (grep 'details_payload.update') and --refresh-library-metadata (grep
+    'new_details.update').
+    """
+    return {
+        "anilist_id": comic_data.get("anilist_id"),
+        "mal_id": comic_data.get("mal_id"),
+        "country_of_origin": comic_data.get("country_of_origin"),
+        "media_format": comic_data.get("media_format"),
+        "anilist_synonyms": list(comic_data.get("anilist_synonyms") or []),
+        "anilist_tags": [
+            _serialize_anilist_tag(t)
+            for t in (comic_data.get("anilist_tags") or [])
+        ],
+        "anilist_spoiler_tags": [
+            _serialize_anilist_tag(t)
+            for t in (comic_data.get("anilist_spoiler_tags") or [])
+        ],
+        "source_site": source_site or "",
+        "source_url": source_url or "",
+        "language": language or "",
+    }
+
+
+def _rewrite_cbz_comicinfo(
+    folder: str,
+    comic_data: Dict[str, Any],
+    series_title: str,
+    lang_default: str,
+) -> int:
+    """Rewrite enrichment elements in every chapter CBZ's ComicInfo.xml, in
+    place, preserving all per-chapter fields. Returns the count updated.
+
+    Used only by _refresh_library_metadata when --refresh-rewrite-cbz is set.
+    For each .cbz: parse the per-chapter fields we must NOT lose
+    (Title/Number/Volume/Translator/Web/Year-Month-Day/LanguageISO/PageCount/
+    Publisher), then rebuild the whole ComicInfo via
+    build_per_chapter_comic_info_xml with the enriched series-level
+    comic_data — so <Genre>/<Tags>/<SpoilerTags>/<TagsExtended>/<Summary>/
+    <CountryOfOrigin>/<MediaFormat>/<AnilistId>/<MalId> come out normalized,
+    byte-identical in shape to a fresh download. Per-member ZIP
+    compression is preserved (we don't re-deflate already-compressed art).
+    grep caller: _refresh_library_metadata.
+    """
+    import calendar
+    import xml.etree.ElementTree as ET
+
+    updated = 0
+    try:
+        names = sorted(os.listdir(folder))
+    except OSError:
+        return 0
+    for name in names:
+        if not name.lower().endswith(".cbz"):
+            continue
+        path = os.path.join(folder, name)
+        try:
+            with zipfile.ZipFile(path) as zin:
+                infos = zin.infolist()
+                blobs = {zi.filename: zin.read(zi.filename) for zi in infos}
+        except (OSError, zipfile.BadZipFile):
+            continue
+
+        ci_name = next(
+            (zi.filename for zi in infos
+             if os.path.basename(zi.filename).lower() == "comicinfo.xml"),
+            None,
+        )
+
+        chap_title = number = volume = translator = web = lang = None
+        writer = penciller = None
+        page_count = 0
+        uploaded_epoch: Optional[int] = None
+        publishers: List[str] = []
+        if ci_name and blobs.get(ci_name):
+            root = None
+            try:
+                root = ET.fromstring(blobs[ci_name].decode("utf-8", "replace"))
+            except ET.ParseError:
+                root = None
+            if root is not None:
+                def _gx(tag: str) -> Optional[str]:
+                    el = root.find(tag)
+                    return el.text if (el is not None and el.text) else None
+                chap_title = _gx("Title")
+                number = _gx("Number")
+                volume = _gx("Volume")
+                translator = _gx("Translator")
+                web = _gx("Web")
+                lang = _gx("LanguageISO")
+                writer = _gx("Writer")
+                penciller = _gx("Penciller")
+                pub = _gx("Publisher")
+                if pub:
+                    publishers = [pub]
+                pc = _gx("PageCount")
+                if pc:
+                    try:
+                        page_count = int(pc)
+                    except ValueError:
+                        page_count = 0
+                y, m, d = _gx("Year"), _gx("Month"), _gx("Day")
+                if y and m and d:
+                    try:
+                        uploaded_epoch = calendar.timegm(
+                            (int(y), int(m), int(d), 0, 0, 0, 0, 0, 0)
+                        )
+                    except (ValueError, OverflowError):
+                        uploaded_epoch = None
+
+        # Preserve the archive's existing Writer/Penciller (authors/artists).
+        # AniList v1 supplies no staff, so the refresh must carry author/artist
+        # metadata through unchanged rather than dropping <Penciller> (Codex
+        # review on PR #47). Prefer the CBZ's own values; fall back to the
+        # series-level comic_data (seeded from details.json in
+        # _refresh_library_metadata).
+        per_cbz: Dict[str, Any] = dict(comic_data)
+        if writer:
+            per_cbz["authors"] = [s.strip() for s in writer.split(",") if s.strip()]
+        if penciller:
+            per_cbz["artists"] = [s.strip() for s in penciller.split(",") if s.strip()]
+        new_ci = build_per_chapter_comic_info_xml(
+            series_title=series_title,
+            chapter_title=chap_title,
+            chapter_num=number,
+            volume=volume,
+            scanlator=translator,
+            web_url=web,
+            uploaded_epoch=uploaded_epoch,
+            comic_info=per_cbz,
+            publishers=publishers,
+            lang=lang or lang_default or "",
+            page_count=page_count,
+        )
+        target = ci_name or "ComicInfo.xml"
+        had_ci = target in blobs
+        blobs[target] = new_ci.encode("utf-8")
+
+        tmp = path + ".refresh.tmp"
+        try:
+            with zipfile.ZipFile(tmp, "w") as zout:
+                for zi in infos:
+                    # writestr(ZipInfo, ...) keeps the member's original
+                    # compress_type — no re-deflating already-compressed art.
+                    zout.writestr(zi, blobs[zi.filename])
+                if not had_ci:
+                    zout.writestr(target, blobs[target])
+            os.replace(tmp, path)
+            updated += 1
+        except OSError:
+            try:
+                if os.path.exists(tmp):
+                    os.remove(tmp)
+            except OSError:
+                pass
+    return updated
+
+
+def _refresh_cover_jpg(
+    folder: str, url: str, fallback_url: Optional[str], scraper
+) -> bool:
+    """Re-download a series cover to <folder>/cover.jpg for
+    --refresh-library-metadata's always-normalize-covers path. Returns True
+    iff cover.jpg was (re)written.
+
+    dl_image sniffs the real image format and may produce cover_orig.<ext>;
+    we copy whatever it produced to the canonical Komikku name cover.jpg
+    (Komikku decodes by content, not extension — komikkuspec §5). Tries `url`
+    (the AniList cover) first, then `fallback_url` (the stashed site cover)
+    when the AniList CDN fetch returns None. On total failure the existing
+    cover.jpg is left untouched (never blanked). Download work happens in a
+    throwaway temp dir so a partial/aborted fetch can't litter the series
+    folder. dl_image is safe here: its watchdog/host-poison checks are no-ops
+    outside the chapter loop. grep caller: _refresh_library_metadata.
+    """
+    import tempfile
+
+    tmp_dir = tempfile.mkdtemp(prefix="aio_cover_")
+    try:
+        got = dl_image(url, tmp_dir, "cover_orig.jpg", scraper, cleanup=True)
+        if got is None and fallback_url and fallback_url != url:
+            got = dl_image(
+                fallback_url, tmp_dir, "cover_orig.jpg", scraper, cleanup=True
+            )
+        if got and os.path.exists(got):
+            shutil.copy2(got, os.path.join(folder, "cover.jpg"))
+            return True
+        return False
+    except Exception:
+        # Best-effort: a cover refresh must never abort the whole library run.
+        return False
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+def _refresh_library_metadata(args) -> int:
+    """--refresh-library-metadata mode. Returns a process exit code.
+
+    Re-pull AniList metadata for every already-downloaded series under
+    --output-dir and rewrite the on-disk metadata sinks WITHOUT
+    re-downloading images. Per series folder carrying a .aio_series.json:
+
+      1. Seed comic_data from the existing .aio_series.json (title, site
+         genres, authors, status, cached anilist_id, synonyms) + the
+         details.json description (so a failed match never blanks it).
+      2. enrich_from_anilist — cached-ID fast path; falls back to a title
+         search for series predating enrichment. Honors --metadata-refresh
+         (cache-bypass) and --metadata-tag-min-rank. Same merge as a live
+         download, so genres get the REPLACE normalization.
+      3. On a confident match: rewrite details.json + .aio_series.json,
+         repoint the cover URL to AniList's, and re-download cover.jpg from
+         AniList (normalize the on-disk cover); with --refresh-rewrite-cbz
+         also rewrite each CBZ's ComicInfo.xml.
+      4. On no match / error: leave the series untouched.
+
+    Cross-file: sites/external_metadata.enrich_from_anilist,
+    library_state.scan_library, _rewrite_cbz_comicinfo,
+    _komikku_status_to_digit, _serialize_anilist_tag.
+    """
+    from library_state import scan_library, SERIES_META_FILE
+    from sites.external_metadata import enrich_from_anilist
+
+    root = os.path.abspath(args.output_dir)
+    all_entries = scan_library(root)
+
+    # Optional positional filters: restrict to series whose folder name or
+    # source URL contains any of the given substrings (case-insensitive).
+    # Lets the user repair one series — `--refresh-library-metadata "Eleceed"`
+    # — instead of the whole library. Empty = every series.
+    filters = [
+        str(s).strip().lower()
+        for s in (getattr(args, "comic_url", None) or [])
+        if str(s).strip()
+    ]
+
+    def _matches(entry: Dict[str, Any]) -> bool:
+        if not filters:
+            return True
+        hay = (
+            str(entry.get("name", ""))
+            + " "
+            + str((entry.get("series_meta") or {}).get("url", ""))
+        ).lower()
+        return any(f in hay for f in filters)
+
+    entries = [e for e in all_entries if e.get("series_meta") and _matches(e)]
+    no_meta = (
+        [e for e in all_entries if not e.get("series_meta")]
+        if not filters
+        else []
+    )
+    if not entries:
+        scope = f" matching {filters}" if filters else ""
+        print(f"No series with .aio_series.json found in {root}{scope}.")
+        return 0
+
+    tag_min_rank = int(getattr(args, "metadata_tag_min_rank", 50) or 50)
+    force_refresh = bool(getattr(args, "metadata_refresh", False))
+    rewrite_cbz = bool(getattr(args, "refresh_rewrite_cbz", False))
+    # Cover normalization (user-chosen "always re-download" on refresh): one
+    # shared HTTP session reused for every matched series' cover.jpg fetch.
+    # cloudscraper when available (a site-cover fallback may sit behind
+    # Cloudflare); AniList's own CDN is plain and works with either.
+    cover_scraper = None
+    try:
+        if cloudscraper is not None and sys.version_info >= (3, 7):
+            cover_scraper = cloudscraper.create_scraper(
+                browser={"browser": "chrome", "platform": "darwin", "mobile": False}
+            )
+    except Exception:
+        cover_scraper = None
+    if cover_scraper is None:
+        cover_scraper = requests.Session()
+    print(
+        f"[*] Refreshing AniList metadata for {len(entries)} series in {root}"
+        + (" (+CBZ ComicInfo rewrite)" if rewrite_cbz else "")
+        + (" (cache-bypass)" if force_refresh else "")
+        + " (+cover.jpg re-download)"
+    )
+
+    matched: List[str] = []
+    skipped: List[str] = []
+    failed: List[str] = []
+
+    for e in entries:
+        folder = e["folder"]
+        meta = dict(e.get("series_meta") or {})
+        title = meta.get("title") or e.get("name") or ""
+        if not title:
+            skipped.append(e.get("name", "?"))
+            continue
+
+        comic_data: Dict[str, Any] = {
+            "title": title,
+            "hid": meta.get("hid", ""),
+            "authors": list(meta.get("authors") or []),
+            "genres": list(meta.get("genres") or []),
+            "status": meta.get("status"),
+            "cover": meta.get("cover"),
+        }
+        syn = list(meta.get("anilist_synonyms") or [])
+        if syn:
+            comic_data["alt_names"] = syn
+
+        details_path = os.path.join(folder, "details.json")
+        existing_details: Dict[str, Any] = {}
+        try:
+            with open(details_path, encoding="utf-8") as f:
+                loaded = json.load(f)
+            if isinstance(loaded, dict):
+                existing_details = loaded
+        except (OSError, ValueError):
+            existing_details = {}
+        if existing_details.get("description"):
+            comic_data["desc"] = existing_details["description"]
+        # Seed artists from details.json's preserved `artist` field. AniList
+        # v1 fetches no staff, so without this the CBZ rewrite would emit an
+        # empty <Penciller> and drop artist metadata. _rewrite_cbz_comicinfo
+        # still prefers each archive's own <Penciller> when present; this is
+        # the fallback (and the recovery path for CBZs whose <Penciller> was
+        # already stripped by the pre-fix run). authors come from
+        # .aio_series.json above.
+        if existing_details.get("artist"):
+            comic_data["artists"] = [
+                s.strip()
+                for s in str(existing_details["artist"]).split(",")
+                if s.strip()
+            ]
+
+        try:
+            enrich_from_anilist(
+                comic_data,
+                hid=comic_data["hid"],
+                handler_name=meta.get("site", ""),
+                year=None,
+                cover_url=comic_data.get("cover"),
+                tag_min_rank=tag_min_rank,
+                force_refresh=force_refresh,
+                cached_anilist_id=meta.get("anilist_id"),
+            )
+        except Exception as exc:
+            print(f"  [!] {title}: enrichment error {type(exc).__name__}: {exc}")
+            failed.append(title)
+            continue
+
+        if not comic_data.get("anilist_id"):
+            best = comic_data.pop("_anilist_best_score", 0.0) or 0.0
+            print(
+                f"  [-] {title}: no confident AniList match "
+                f"(best {best:.0f}) — left unchanged"
+            )
+            skipped.append(title)
+            continue
+
+        # Rewrite Komikku details.json (preserve extra keys + existing artist).
+        new_details = dict(existing_details)
+        new_details["title"] = title
+        new_details["author"] = ", ".join(comic_data.get("authors") or [])
+        new_details.setdefault("artist", existing_details.get("artist", ""))
+        new_details["description"] = (
+            comic_data.get("desc") or existing_details.get("description", "")
+        )
+        new_details["genre"] = list(comic_data.get("genres") or [])
+        new_details["status"] = _komikku_status_to_digit(comic_data.get("status"))
+        # Reader-facing extension keys (flat top-level; Komikku ignores
+        # unknown keys). Mirrors the live-download writer (grep
+        # 'details_payload.update'). Provenance comes from the existing
+        # .aio_series.json (meta), authoritative on an in-place refresh;
+        # language falls back to any value the prior details.json carried.
+        new_details.update(
+            _build_aio_reader_extras(
+                comic_data,
+                source_site=meta.get("site"),
+                source_url=meta.get("url"),
+                language=meta.get("language") or existing_details.get("language"),
+            )
+        )
+        try:
+            with open(details_path, "w", encoding="utf-8") as f:
+                json.dump(new_details, f, ensure_ascii=False, indent=2)
+        except OSError as exc:
+            print(f"  [!] {title}: details.json write failed: {exc}")
+            failed.append(title)
+            continue
+
+        # Rewrite .aio_series.json enrichment fields (preserve the rest).
+        meta["genres"] = list(comic_data.get("genres") or [])
+        if comic_data.get("status"):
+            meta["status"] = comic_data["status"]
+        # Repoint the cover URL to AniList's when enrichment supplied one so
+        # .aio_series.json + the UI thumbnail (library.js keys on
+        # seriesMeta.cover) normalize too. comic_data["cover"] is the AniList
+        # URL after enrich, or the unchanged site cover when AniList had none
+        # — safe to assign unconditionally.
+        meta["cover"] = comic_data.get("cover")
+        meta["anilist_id"] = comic_data.get("anilist_id")
+        meta["mal_id"] = comic_data.get("mal_id")
+        meta["country_of_origin"] = comic_data.get("country_of_origin")
+        meta["media_format"] = comic_data.get("media_format")
+        meta["anilist_synonyms"] = list(comic_data.get("anilist_synonyms") or [])
+        meta["anilist_tags"] = [
+            _serialize_anilist_tag(t)
+            for t in (comic_data.get("anilist_tags") or [])
+        ]
+        meta["anilist_spoiler_tags"] = [
+            _serialize_anilist_tag(t)
+            for t in (comic_data.get("anilist_spoiler_tags") or [])
+        ]
+        try:
+            with open(
+                os.path.join(folder, SERIES_META_FILE), "w", encoding="utf-8"
+            ) as f:
+                json.dump(meta, f, indent=2)
+        except OSError as exc:
+            print(f"  [!] {title}: .aio_series.json write failed: {exc}")
+            failed.append(title)
+            continue
+
+        # Re-download cover.jpg from AniList (user chose always-normalize on
+        # refresh). Guarded on anilist_cover so we ONLY overwrite the on-disk
+        # cover when AniList actually supplied one — never clobber a custom
+        # cover.jpg with a re-fetched site cover in the rare matched-but-no-
+        # AniList-cover case. Falls back to the stashed site cover if the
+        # AniList CDN fetch fails. grep _refresh_cover_jpg.
+        cover_note = ""
+        if comic_data.get("anilist_cover"):
+            if _refresh_cover_jpg(
+                folder,
+                comic_data["cover"],
+                comic_data.get("site_cover"),
+                cover_scraper,
+            ):
+                cover_note = ", cover.jpg"
+
+        cbz_note = ""
+        if rewrite_cbz:
+            n = _rewrite_cbz_comicinfo(
+                folder,
+                comic_data,
+                title,
+                meta.get("language") or existing_details.get("language") or "",
+            )
+            cbz_note = f", {n} CBZ rewritten"
+
+        matched.append(title)
+        print(
+            f"  [+] {title}: matched id={comic_data['anilist_id']} "
+            f"({len(comic_data.get('anilist_tags', []))} tags, "
+            f"{len(comic_data.get('genres', []))} genres) "
+            f"— details.json + .aio_series.json{cover_note}{cbz_note}"
+        )
+
+    print(
+        f"\nRefresh complete: {len(matched)} updated, "
+        f"{len(skipped)} skipped, {len(failed)} failed"
+        + (
+            f", {len(no_meta)} folders without .aio_series.json ignored"
+            if no_meta
+            else ""
+        )
+    )
+    return 1 if failed else 0
+
+
 def main():
     p = argparse.ArgumentParser("comic downloader")
     p.add_argument("comic_url", nargs="*", help="One or more comic/manga URLs")
@@ -5541,6 +6472,29 @@ def main():
         help="Scan --output-dir for saved series metadata and download new chapters for each series.",
     )
     p.add_argument(
+        "--refresh-library-metadata",
+        action="store_true",
+        help="Re-pull AniList metadata for every already-downloaded series "
+             "under --output-dir and rewrite details.json + .aio_series.json "
+             "in place, WITHOUT re-downloading images. Pass a positional "
+             "substring (folder name or URL) to restrict to one series, e.g. "
+             "--refresh-library-metadata \"Eleceed\". Honors "
+             "--metadata-tag-min-rank and --metadata-refresh (cache-bypass). "
+             "Repairs libraries grabbed before the genre-normalization fix. "
+             "Add --refresh-rewrite-cbz to also rewrite chapter CBZ ComicInfo. "
+             "Then exits.",
+    )
+    p.add_argument(
+        "--refresh-rewrite-cbz",
+        action="store_true",
+        help="With --refresh-library-metadata, also rewrite the enrichment "
+             "elements inside each chapter CBZ's ComicInfo.xml "
+             "(<Genre>/<Tags>/<SpoilerTags>/<TagsExtended>/<Summary>/"
+             "<CountryOfOrigin>/<MediaFormat>/<AnilistId>/<MalId>). Per-chapter "
+             "fields are preserved. I/O-heavy (repackages every CBZ); "
+             "off by default.",
+    )
+    p.add_argument(
         "--serve",
         action="store_true",
         help="Start the FastAPI REST server instead of downloading.",
@@ -5778,6 +6732,69 @@ def main():
              "method=6 trades ~2-3x encode time for ~5%% smaller files — "
              "sensible for overnight bulk runs on a desktop, not phone CPUs.",
     )
+    # ── Content-aware JXL/AVIF transcode (opt-in via --modernize) ──
+    # CBZ-only storage optimizer: re-encode JPEG/PNG pages to JXL (B&W line
+    # art) or AVIF (color) before the byte-passthrough fast-path packages them.
+    # Hard-gated below (grep '--modernize compatibility checks') to the CBZ
+    # fast-path: every flag that would force the slow save_final_images path
+    # (which re-encodes .jxl/.avif to PNG) is rejected with p.error(). Pairs
+    # with recompress_chapter_images_modern(); the --modernize* dests are in
+    # _RESUME_GATING_DESTS so changing them re-transcodes on resume.
+    p.add_argument(
+        "--modernize",
+        action="store_true",
+        help="CBZ ONLY: transcode downloaded JPEG/PNG pages to JXL (grayscale "
+             "line art) or AVIF (color) before packaging, for visually-lossless "
+             "storage savings on a reader that decodes them. Per-page format "
+             "choice; WebP/AVIF/GIF/already-JXL sources are left untouched (no "
+             "headroom). A page is replaced only if the new file is smaller by "
+             "the --modernize-min-saving margin, else the original bytes are "
+             "kept. Rides the CBZ byte-passthrough fast-path and is therefore "
+             "rejected at startup with --format other than cbz, --no-processing, "
+             "--no-cbz-preserve-originals, --quality, --width, --aspect-ratio, "
+             "or --scaling != 100; use --keep-images to retain the original "
+             "downloads. Needs pillow-jxl-plugin for JXL (AVIF is built into "
+             "Pillow >= 12).",
+    )
+    p.add_argument(
+        "--modernize-format",
+        choices=["auto", "jxl", "avif", "jxl+avif"],
+        default="auto",
+        help="Codec routing for --modernize (default: auto). auto = JXL for "
+             "grayscale pages, AVIF for color. jxl / avif = force one codec. "
+             "jxl+avif = encode both per page and keep the smaller (slower). "
+             "Oversized pages (> 8192 px) route to JXL regardless (AVIF "
+             "large-dimension decode is less portable), except under 'avif' "
+             "where they are left untouched.",
+    )
+    p.add_argument(
+        "--modernize-quality",
+        type=int,
+        default=90,
+        choices=range(1, 101),
+        metavar="[1-100]",
+        help="AVIF quality for color pages under --modernize (default: 90 ~ "
+             "visually lossless; 85 = aggressive, smaller, artifacts only under "
+             "pixel-peeping). Ignored for grayscale (JXL) pages.",
+    )
+    p.add_argument(
+        "--modernize-distance",
+        type=float,
+        default=1.0,
+        help="JXL Butteraugli distance for grayscale pages under --modernize "
+             "(default: 1.0 ~ visually lossless; lower = higher quality/larger; "
+             "0.0 selects JXL mathematically-lossless mode). Ignored for color "
+             "(AVIF) pages.",
+    )
+    p.add_argument(
+        "--modernize-min-saving",
+        type=float,
+        default=0.92,
+        help="Keep a transcoded page only if its size is below this fraction "
+             "of the original (default: 0.92 = must save at least 8%%). Guards "
+             "against bloating already-dense pages and auto-skips low-headroom "
+             "sources; the original bytes are kept otherwise.",
+    )
     # ── Komikku-compatible per-chapter CBZ output (Komikku LocalSource format) ──
     # Writes per-chapter CBZs with per-chapter ComicInfo.xml, plus
     # cover.jpg and details.json at the series-folder root, matching the
@@ -5921,6 +6938,11 @@ def main():
             print(f"Failed: {', '.join(failed)}")
             sys.exit(1)
         return
+
+    if getattr(args, "refresh_library_metadata", False):
+        # In-place AniList re-enrichment of an existing library; no
+        # downloads. Defined just above main(). Exits with its own code.
+        sys.exit(_refresh_library_metadata(args))
 
     # Phase B (2026-05-07) / Phase H follow-up (2026-05-16): snapshot which CLI
     # flags the user explicitly set on THIS invocation, BEFORE any later
@@ -6075,6 +7097,92 @@ def main():
                 "CBZ. Disable --keep-images to maximize disk savings.",
                 file=sys.stderr,
             )
+
+    # --modernize compatibility checks. Like --webtoon-recompress these run
+    # early (before a multi-hour download), but ALL fast-path-disabling
+    # combinations are HARD errors, not warnings: --modernize emits .jxl/.avif,
+    # and unlike .webp those are NOT understood by the slow save_final_images
+    # auto-format path (it would re-encode them to PNG, and epub/none force
+    # JPEG). So --modernize is only correct on the CBZ byte-passthrough
+    # fast-path; we reject anything that would disable it. The seven checks
+    # mirror the seven cbz_fast_path conditions (grep 'cbz_fast_path =') using
+    # the same _user_set_* sentinels so they track that gate if it ever changes.
+    if getattr(args, "modernize", False):
+        if args.format != "cbz":
+            p.error(
+                "--modernize requires --format cbz: it transcodes pages into "
+                "the CBZ byte-passthrough fast-path. Other formats re-encode the "
+                "pages (epub/none -> JPEG, pdf -> /DCTDecode) and would discard "
+                "the JXL/AVIF."
+            )
+        if getattr(args, "no_cbz_preserve_originals", False):
+            p.error(
+                "--modernize is incompatible with --no-cbz-preserve-originals: "
+                "it disables the fast-path, so the .jxl/.avif pages would be "
+                "decoded and re-encoded to PNG by save_final_images."
+            )
+        if args.no_processing:
+            p.error(
+                "--modernize is incompatible with --no-processing, which "
+                "bypasses the transcode stage entirely."
+            )
+        if args.scaling != 100:
+            p.error(
+                f"--modernize is incompatible with --scaling={args.scaling}: "
+                "resizing forces the slow decode-resize-encode path, which "
+                "re-encodes the .jxl/.avif pages to PNG. Use --scaling 100."
+            )
+        if getattr(args, "_user_set_width", False):
+            p.error(
+                "--modernize is incompatible with --width: it forces the slow "
+                "decode-resize-encode path (which re-encodes pages to PNG)."
+            )
+        if getattr(args, "_user_set_aspect_ratio", False):
+            p.error(
+                "--modernize is incompatible with --aspect-ratio: it forces the "
+                "slow decode-resize-encode path (which re-encodes pages to PNG)."
+            )
+        if getattr(args, "_user_set_quality", False):
+            p.error(
+                "--modernize is incompatible with an explicit --quality: it "
+                "forces the slow re-encode path. Set modernize quality via "
+                "--modernize-quality (AVIF) and --modernize-distance (JXL)."
+            )
+        # Fail fast on missing encoders rather than mid-download. JXL needs the
+        # optional pillow-jxl-plugin; AVIF is native in Pillow >= 12. An
+        # avif-only policy never emits JXL (oversized pages are skipped), so it
+        # doesn't require the JXL plugin.
+        _mpolicy = args.modernize_format
+        if _mpolicy != "avif":
+            try:
+                import pillow_jxl  # noqa: F401  (registers JXL in PIL.Image.SAVE)
+            except ImportError:
+                p.error(
+                    f"--modernize-format {_mpolicy} needs the JXL encoder. "
+                    "Install it: pip install pillow-jxl-plugin "
+                    "(or use --modernize-format avif for AVIF-only)."
+                )
+        if _mpolicy in ("auto", "avif", "jxl+avif"):
+            # AVIF is native in Pillow >= 12 (Image.init() registers it). On
+            # OLDER Pillow the pillow-avif-plugin fallback advertised in the
+            # error below registers AVIF only when its module is IMPORTED —
+            # Image.init() does not load it — so try that import first or we'd
+            # reject a working install. Best-effort, mirrors the pillow_jxl
+            # import above. The same import is repeated in
+            # recompress_chapter_images_modern so the encoder is present at
+            # encode time too (grep 'import pillow_avif').
+            try:
+                import pillow_avif  # noqa: F401  (registers AVIF in PIL.Image.SAVE)
+            except ImportError:
+                pass
+            Image.init()  # native AVIF plugin registers lazily
+            if "AVIF" not in Image.SAVE:
+                p.error(
+                    f"--modernize-format {_mpolicy} needs AVIF write support. "
+                    "Pillow >= 12 has it natively; otherwise: "
+                    "pip install pillow-avif-plugin."
+                )
+
     # --search is checked before --list-chapters / build-final-file because it
     # resolves the URL, and the downstream modes' "URL required" check would
     # otherwise fire before search runs.
@@ -6860,7 +7968,9 @@ def main():
     # enrichment writes into comic_data propagate to every downstream
     # sink: ComicInfo.xml builders (build_comic_info_xml +
     # build_per_chapter_comic_info_xml), Komikku details.json writer
-    # (genres union), and .aio_series.json writer (full ID + tag persist).
+    # (genres REPLACED by AniList's curated set on a confident match — see
+    # _apply_anilist_match), and .aio_series.json writer (full ID + tag
+    # persist).
     # Failures are swallowed — site-only metadata is the fallback path.
     # Cross-file: sites/external_metadata.py owns the client; CLI flags
     # registered near --enable-ml-rating; cache key in .aio_series.json
@@ -7185,6 +8295,22 @@ def main():
             original_cover_path = dl_image(
                 cover_url, main_tmp_dir, "cover_orig.jpg", scraper, cleanup=not args.no_cleanup
             )
+            # AniList cover normalization (--metadata-source=anilist): the
+            # enrichment step (sites/external_metadata.py:_apply_anilist_match)
+            # overwrote comic_data["cover"] with the AniList cover and stashed
+            # the site's own cover under `site_cover`. If the AniList CDN fetch
+            # failed (dl_image → None), fall back to the site cover so an
+            # enriched run is never worse than an un-enriched one.
+            if original_cover_path is None:
+                site_cover = comic_data.get("site_cover")
+                if site_cover and site_cover != cover_url:
+                    log_verbose(
+                        "  AniList cover fetch failed; falling back to site cover"
+                    )
+                    original_cover_path = dl_image(
+                        site_cover, main_tmp_dir, "cover_orig.jpg", scraper,
+                        cleanup=not args.no_cleanup,
+                    )
             if args.format == "cbz" and original_cover_path:
                 current_book_content.append(
                     {"type": "image", "path": original_cover_path}
@@ -7222,12 +8348,30 @@ def main():
                 "genre": list(comic_data.get("genres", []) or []),
                 "status": _komikku_status_to_digit(comic_data.get("status")),
             }
+            # Reader-facing extension keys (flat, top-level). Komikku parses
+            # details.json with Json{ignoreUnknownKeys=true} (git show
+            # 1f17a20^:komikkuspec.md §6.1), so these are dropped by Komikku
+            # and read by the user's own reader. The AniList rich tags /
+            # ids / format / synonyms + source provenance only reach a reader
+            # via this file — .aio_series.json is never read by one. Field
+            # contract + name-collision rationale: _build_aio_reader_extras.
+            # Provenance values mirror the .aio_series.json writer below
+            # (grep '"site": handler.name').
+            details_payload.update(
+                _build_aio_reader_extras(
+                    comic_data,
+                    source_site=handler.name,
+                    source_url=args.comic_url,
+                    language=args.language,
+                )
+            )
             details_path = os.path.join(out_dir, "details.json")
             with open(details_path, "w", encoding="utf-8") as f:
                 json.dump(details_payload, f, ensure_ascii=False, indent=2)
             log_verbose(
                 f"  Komikku: wrote details.json (status={details_payload['status']}, "
-                f"{len(details_payload['genre'])} genre tags)"
+                f"{len(details_payload['genre'])} genre tags, "
+                f"{len(details_payload['anilist_tags'])} anilist tags)"
             )
         except OSError as exc:
             # Don't fail the whole run for a metadata-write error. The
@@ -8122,6 +9266,8 @@ def main():
                 # per-file extensions on the arcname, so .webp downloads stay
                 # .webp, .png stay .png, etc. Phase A made raw_image_paths
                 # land with correct extensions which is what makes this work.
+                # Computed BEFORE the --modernize block so modernize gates on the
+                # exact same condition (see below).
                 cbz_fast_path = (
                     args.format == "cbz"
                     and not args.no_processing
@@ -8131,6 +9277,51 @@ def main():
                     and not getattr(args, "_user_set_aspect_ratio", False)
                     and not getattr(args, "_user_set_quality", False)
                 )
+                # --modernize (opt-in, CBZ-only): content-aware JXL/AVIF
+                # transcode of the downloaded pages, in place, BEFORE the CBZ
+                # fast-path consumes raw_image_paths — so the new .jxl/.avif
+                # bytes flow straight into build_cbz with correct extensions and
+                # never reach the slow save_final_images path (which would
+                # re-encode them to PNG). Gated on cbz_fast_path itself, NOT just
+                # format==cbz: the parse-time hard errors (grep '--modernize
+                # compatibility checks') are SKIPPED on a --restore-parameters
+                # resume (the bare resume CLI omits --modernize, so that block
+                # never runs, then run_params.json restores modernize=True). A
+                # resume that re-adds a fast-path-breaking override
+                # (--no-processing / --width / --scaling) would otherwise smuggle
+                # .jxl/.avif into the slow path; riding cbz_fast_path closes that
+                # hole. Runs after the webtoon-recompress block above (so .webp
+                # pages are skipped) and after the prefetch kickoff (CPU encode
+                # overlaps the next downloads). See
+                # recompress_chapter_images_modern().
+                if getattr(args, "modernize", False) and cbz_fast_path:
+                    _t0_modernize = time.monotonic()
+                    log_verbose(
+                        f"  [modernize] Transcoding {len(raw_image_paths)} pages "
+                        f"({args.modernize_format})..."
+                    )
+                    raw_image_paths = recompress_chapter_images_modern(
+                        raw_image_paths,
+                        policy=args.modernize_format,
+                        gray_quality=args.modernize_distance,
+                        color_quality=args.modernize_quality,
+                        min_saving=args.modernize_min_saving,
+                    )
+                    log_verbose(
+                        f"  [modernize] Done in "
+                        f"{time.monotonic() - _t0_modernize:.1f}s."
+                    )
+                elif getattr(args, "modernize", False):
+                    # Requested but the fast-path is disabled — almost always a
+                    # resume with a fast-path-breaking override. Skip (don't feed
+                    # .jxl/.avif into the re-encode path) and say so, rather than
+                    # hard-erroring and aborting the whole resume.
+                    log_verbose(
+                        "  [modernize] skipped: effective settings disable the "
+                        "CBZ byte-passthrough fast-path (e.g. a "
+                        "--restore-parameters resume adding --no-processing, "
+                        "--width, or --scaling). Pages left as-is."
+                    )
                 if cbz_fast_path:
                     processed_page_images = list(raw_image_paths)
                     log_verbose(
