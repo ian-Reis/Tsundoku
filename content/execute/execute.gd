@@ -16,6 +16,7 @@ extends Control
 @onready var download_button: Button = %DownloadButton
 @onready var setup_button: Button = %SetupButton
 @onready var open_downloads_button: Button = %OpenDownloadsButton
+@onready var library_button: Button = %LibraryButton
 @onready var status_label: Label = %StatusLabel
 @onready var queue_vbox_container: VBoxContainer = %QueueVBoxContainer
 
@@ -43,6 +44,7 @@ func _ready() -> void:
 	download_button.pressed.connect(_on_download_pressed)
 	setup_button.pressed.connect(_on_setup_pressed)
 	open_downloads_button.pressed.connect(_on_open_downloads_pressed)
+	library_button.pressed.connect(_on_library_pressed)
 	ui_lang_option.item_selected.connect(_on_ui_lang_selected)
 	I18n.language_changed.connect(_on_language_changed)
 
@@ -104,6 +106,14 @@ func _on_open_downloads_pressed() -> void:
 		_set_status(I18n.t("status_open_downloads_failed"))
 
 
+const LIBRARY: PackedScene = preload("res://content/library/library.tscn")
+
+## Abre a Biblioteca como overlay sobre a tela atual.
+func _on_library_pressed() -> void:
+	var lib := LIBRARY.instantiate()
+	get_tree().root.add_child(lib)
+
+
 # ---------------------------------------------------------------------------
 # Idioma
 # ---------------------------------------------------------------------------
@@ -124,6 +134,7 @@ func _apply_language() -> void:
 	download_button.text = I18n.t("app_download")
 	setup_button.text = I18n.t("app_install")
 	open_downloads_button.text = I18n.t("app_open_downloads")
+	library_button.text = I18n.t("app_library")
 	url_text_edit.placeholder_text = I18n.t("ph_url")
 	volumes_text_edit.placeholder_text = I18n.t("ph_volumes")
 	chapters_text_edit.placeholder_text = I18n.t("ph_chapters")
