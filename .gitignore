@@ -36,6 +36,9 @@ content/downloads/mangafire/
 # Comic book archives
 *.cbz
 
+# Novel downloads
+content/downloads/centralnovel/
+
 # OS metadata
 .DS_Store
 Thumbs.db
