@@ -33,6 +33,9 @@ content/runtime/aio/python/
 # Manga downloads
 content/downloads/mangafire/
 
+# Comic book archives
+*.cbz
+
 # OS metadata
 .DS_Store
 Thumbs.db
