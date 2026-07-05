@@ -135,7 +135,28 @@ class MangaKatanaSiteHandler(BaseSiteHandler):
         # MangaKatana does NOT expose a separate Artist field on its series
         # template (verified 2026-05-19 audit). `artists` stays empty by site
         # limitation; Komikku's details.json artist key reflects "no artist".
-        genres = [a.get_text(strip=True) for a in soup.select(".genres a") if a.get_text(strip=True)]
+        # Series genres live inside the .info meta table:
+        #   div.info > ul.meta.d-table > li.d-row-small > .value > div.genres > a
+        # MangaKatana ALSO ships a nav-header genre dropdown
+        # <ul class="sub-menu genres"> listing the ENTIRE genre taxonomy
+        # (~52 links). An unscoped ".genres a" matched BOTH and scraped the
+        # whole taxonomy as this series' genres — the bug behind the 50+-tag
+        # dumps in details.json/ComicInfo. Scope to .info; fall back to a
+        # nav-excluding scan if a future template drops the .info wrapper.
+        # Verified against the live "smoking-at-the-back" page 2026-06-06
+        # (grep "sub-menu genres" / "class=\"text_0\"").
+        genres = [
+            a.get_text(strip=True)
+            for a in soup.select(".info .genres a")
+            if a.get_text(strip=True)
+        ]
+        if not genres:
+            genres = [
+                a.get_text(strip=True)
+                for a in soup.select(".genres a")
+                if a.get_text(strip=True)
+                and not a.find_parent("ul", class_="sub-menu")
+            ]
 
         comic: Dict[str, object] = {
             "hid": slug,
