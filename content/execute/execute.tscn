@@ -12,12 +12,19 @@ gradient = SubResource("Gradient_5kto7")
 fill_from = Vector2(1, 1)
 fill_to = Vector2(0, 0)
 
-[sub_resource type="LabelSettings" id="LabelSettings_g4v7s"]
-font = ExtResource("2_1kx0r")
-font_size = 63
-
 [sub_resource type="StyleBoxFlat" id="StyleBoxFlat_57qmd"]
 bg_color = Color(0, 0, 0, 0.21960784)
+corner_radius_top_left = 20
+corner_radius_top_right = 20
+corner_radius_bottom_right = 20
+corner_radius_bottom_left = 20
+
+[sub_resource type="LabelSettings" id="LabelSettings_g4v7s"]
+font = ExtResource("2_1kx0r")
+font_size = 72
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_yf5fn"]
+bg_color = Color(0, 0, 0, 0.20784314)
 corner_radius_top_left = 20
 corner_radius_top_right = 20
 corner_radius_bottom_right = 20
@@ -68,58 +75,69 @@ metadata/_edit_use_anchors_ = true
 layout_mode = 2
 metadata/_edit_use_anchors_ = true
 
+[node name="MarginContainer" type="MarginContainer" parent="CenterContainer/MarginContainer" unique_id=394082192]
+layout_mode = 2
+theme_override_constants/margin_top = 101
+
+[node name="Panel" type="Panel" parent="CenterContainer/MarginContainer/MarginContainer" unique_id=819013812]
+custom_minimum_size = Vector2(1024, 300)
+layout_mode = 2
+theme_override_styles/panel = SubResource("StyleBoxFlat_57qmd")
+
 [node name="VBoxContainer" type="VBoxContainer" parent="CenterContainer/MarginContainer" unique_id=1942259421]
 layout_mode = 2
 theme_override_constants/separation = 7
 
 [node name="MarginContainer" type="MarginContainer" parent="CenterContainer/MarginContainer/VBoxContainer" unique_id=1024758778]
 layout_mode = 2
-theme_override_constants/margin_bottom = 36
+theme_override_constants/margin_bottom = 43
 
-[node name="CenterContainer" type="CenterContainer" parent="CenterContainer/MarginContainer/VBoxContainer/MarginContainer" unique_id=104781121]
+[node name="MarginContainer" type="MarginContainer" parent="CenterContainer/MarginContainer/VBoxContainer/MarginContainer" unique_id=1992929303]
 layout_mode = 2
-mouse_filter = 2
+theme_override_constants/margin_top = -53
 
-[node name="Panel" type="Panel" parent="CenterContainer/MarginContainer/VBoxContainer/MarginContainer/CenterContainer" unique_id=1183803710]
-visible = false
-custom_minimum_size = Vector2(1035, 126)
-layout_mode = 2
-
-[node name="Label" type="Label" parent="CenterContainer/MarginContainer/VBoxContainer/MarginContainer/CenterContainer" unique_id=825020718]
+[node name="Label" type="Label" parent="CenterContainer/MarginContainer/VBoxContainer/MarginContainer/MarginContainer" unique_id=825020718]
 layout_mode = 2
 mouse_filter = 1
 text = "Tsundoku 積ん読"
 label_settings = SubResource("LabelSettings_g4v7s")
 
-[node name="MenuCenterContainer" type="CenterContainer" parent="CenterContainer/MarginContainer/VBoxContainer" unique_id=1359073804]
+[node name="CenterContainer" type="CenterContainer" parent="CenterContainer/MarginContainer/VBoxContainer/MarginContainer" unique_id=104781121]
 layout_mode = 2
+mouse_filter = 2
 
-[node name="Panel" type="Panel" parent="CenterContainer/MarginContainer/VBoxContainer/MenuCenterContainer" unique_id=1559609058]
-custom_minimum_size = Vector2(1250, 400)
+[node name="MarginContainer2" type="MarginContainer" parent="CenterContainer/MarginContainer/VBoxContainer/MarginContainer/CenterContainer" unique_id=2078190774]
 layout_mode = 2
-theme_override_styles/panel = SubResource("StyleBoxFlat_57qmd")
+theme_override_constants/margin_top = 26
+theme_override_constants/margin_bottom = -117
 
-[node name="MenuVBoxContainer" type="VBoxContainer" parent="CenterContainer/MarginContainer/VBoxContainer/MenuCenterContainer" unique_id=497330298]
+[node name="Panel" type="Panel" parent="CenterContainer/MarginContainer/VBoxContainer/MarginContainer/CenterContainer/MarginContainer2" unique_id=1183803710]
+visible = false
+custom_minimum_size = Vector2(1020, 80)
 layout_mode = 2
+theme_override_styles/panel = SubResource("StyleBoxFlat_yf5fn")
 
-[node name="SearchMarginContainer" type="MarginContainer" parent="CenterContainer/MarginContainer/VBoxContainer/MenuCenterContainer/MenuVBoxContainer" unique_id=1159170805]
+[node name="SearchMarginContainer" type="MarginContainer" parent="CenterContainer/MarginContainer/VBoxContainer/MarginContainer/CenterContainer" unique_id=532211070]
 layout_mode = 2
+theme_override_constants/margin_top = 114
+theme_override_constants/margin_bottom = -29
 
-[node name="CenterContainer" type="CenterContainer" parent="CenterContainer/MarginContainer/VBoxContainer/MenuCenterContainer/MenuVBoxContainer/SearchMarginContainer" unique_id=1948813771]
+[node name="VBoxContainer" type="VBoxContainer" parent="CenterContainer/MarginContainer/VBoxContainer/MarginContainer/CenterContainer/SearchMarginContainer" unique_id=1686277384]
 layout_mode = 2
+theme_override_constants/separation = 11
 
-[node name="HBoxContainer" type="HBoxContainer" parent="CenterContainer/MarginContainer/VBoxContainer/MenuCenterContainer/MenuVBoxContainer/SearchMarginContainer/CenterContainer" unique_id=113477791]
+[node name="HBoxContainer" type="HBoxContainer" parent="CenterContainer/MarginContainer/VBoxContainer/MarginContainer/CenterContainer/SearchMarginContainer/VBoxContainer" unique_id=113477791]
 layout_mode = 2
 theme_override_constants/separation = 12
 
-[node name="UrlTextEdit" type="TextEdit" parent="CenterContainer/MarginContainer/VBoxContainer/MenuCenterContainer/MenuVBoxContainer/SearchMarginContainer/CenterContainer/HBoxContainer" unique_id=471963669]
+[node name="UrlTextEdit" type="TextEdit" parent="CenterContainer/MarginContainer/VBoxContainer/MarginContainer/CenterContainer/SearchMarginContainer/VBoxContainer/HBoxContainer" unique_id=471963669]
 unique_name_in_owner = true
 custom_minimum_size = Vector2(253.945, 30)
 layout_mode = 2
 theme_override_fonts/font = SubResource("FontVariation_yakaf")
 placeholder_text = "Url - https://manga..."
 
-[node name="OptionButton" type="OptionButton" parent="CenterContainer/MarginContainer/VBoxContainer/MenuCenterContainer/MenuVBoxContainer/SearchMarginContainer/CenterContainer/HBoxContainer" unique_id=670841649]
+[node name="OptionButton" type="OptionButton" parent="CenterContainer/MarginContainer/VBoxContainer/MarginContainer/CenterContainer/SearchMarginContainer/VBoxContainer/HBoxContainer" unique_id=670841649]
 unique_name_in_owner = true
 custom_minimum_size = Vector2(100, 0)
 layout_mode = 2
@@ -135,7 +153,60 @@ popup/item_2/id = 1
 popup/item_3/text = "Mangá (MangaDex)"
 popup/item_3/id = 3
 
-[node name="ContentLangOption" type="OptionButton" parent="CenterContainer/MarginContainer/VBoxContainer/MenuCenterContainer/MenuVBoxContainer/SearchMarginContainer/CenterContainer/HBoxContainer" unique_id=670841700]
+[node name="DownloadButton" type="Button" parent="CenterContainer/MarginContainer/VBoxContainer/MarginContainer/CenterContainer/SearchMarginContainer/VBoxContainer/HBoxContainer" unique_id=665007042]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(80, 0)
+layout_mode = 2
+theme_override_fonts/font = SubResource("FontVariation_iowcg")
+text = "Download"
+
+[node name="SetupButton" type="Button" parent="CenterContainer/MarginContainer/VBoxContainer/MarginContainer/CenterContainer/SearchMarginContainer/VBoxContainer/HBoxContainer" unique_id=665007099]
+unique_name_in_owner = true
+visible = false
+custom_minimum_size = Vector2(120, 0)
+layout_mode = 2
+theme_override_fonts/font = SubResource("FontVariation_iowcg")
+text = "Instalar runtime"
+
+[node name="OpenDownloadsButton" type="Button" parent="CenterContainer/MarginContainer/VBoxContainer/MarginContainer/CenterContainer/SearchMarginContainer/VBoxContainer/HBoxContainer" unique_id=665007100]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(110, 0)
+layout_mode = 2
+theme_override_fonts/font = SubResource("FontVariation_iowcg")
+text = "Abrir pasta"
+
+[node name="LibraryButton" type="Button" parent="CenterContainer/MarginContainer/VBoxContainer/MarginContainer/CenterContainer/SearchMarginContainer/VBoxContainer/HBoxContainer" unique_id=665007101]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(110, 0)
+layout_mode = 2
+theme_override_fonts/font = SubResource("FontVariation_iowcg")
+text = "Biblioteca"
+
+[node name="BindButton" type="Button" parent="CenterContainer/MarginContainer/VBoxContainer/MarginContainer/CenterContainer/SearchMarginContainer/VBoxContainer/HBoxContainer" unique_id=665007102]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(90, 0)
+layout_mode = 2
+theme_override_fonts/font = SubResource("FontVariation_iowcg")
+text = "Exportar"
+
+[node name="HBoxContainer2" type="HBoxContainer" parent="CenterContainer/MarginContainer/VBoxContainer/MarginContainer/CenterContainer/SearchMarginContainer/VBoxContainer" unique_id=2113821188]
+layout_mode = 2
+
+[node name="VolumesTextEdit" type="TextEdit" parent="CenterContainer/MarginContainer/VBoxContainer/MarginContainer/CenterContainer/SearchMarginContainer/VBoxContainer/HBoxContainer2" unique_id=1195844240]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(164.155, 30)
+layout_mode = 2
+theme_override_fonts/font = SubResource("FontVariation_yakaf")
+placeholder_text = "volumes ex:1,1-5"
+
+[node name="ChaptersTextEdit" type="TextEdit" parent="CenterContainer/MarginContainer/VBoxContainer/MarginContainer/CenterContainer/SearchMarginContainer/VBoxContainer/HBoxContainer2" unique_id=2101537791]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(174, 30)
+layout_mode = 2
+theme_override_fonts/font = SubResource("FontVariation_yakaf")
+placeholder_text = "chapters ex:1,1-5"
+
+[node name="ContentLangOption" type="OptionButton" parent="CenterContainer/MarginContainer/VBoxContainer/MarginContainer/CenterContainer/SearchMarginContainer/VBoxContainer/HBoxContainer2" unique_id=670841700]
 unique_name_in_owner = true
 custom_minimum_size = Vector2(90, 0)
 layout_mode = 2
@@ -147,61 +218,24 @@ popup/item_0/id = 0
 popup/item_1/text = "EN"
 popup/item_1/id = 1
 
-[node name="VolumesTextEdit" type="TextEdit" parent="CenterContainer/MarginContainer/VBoxContainer/MenuCenterContainer/MenuVBoxContainer/SearchMarginContainer/CenterContainer/HBoxContainer" unique_id=1195844240]
-unique_name_in_owner = true
-custom_minimum_size = Vector2(164.155, 30)
+[node name="MenuCenterContainer" type="CenterContainer" parent="CenterContainer/MarginContainer/VBoxContainer" unique_id=1359073804]
 layout_mode = 2
-theme_override_fonts/font = SubResource("FontVariation_yakaf")
-placeholder_text = "volumes ex:1,1-5"
 
-[node name="ChaptersTextEdit" type="TextEdit" parent="CenterContainer/MarginContainer/VBoxContainer/MenuCenterContainer/MenuVBoxContainer/SearchMarginContainer/CenterContainer/HBoxContainer" unique_id=2101537791]
-unique_name_in_owner = true
-custom_minimum_size = Vector2(174, 30)
-layout_mode = 2
-theme_override_fonts/font = SubResource("FontVariation_yakaf")
-placeholder_text = "chapters ex:1,1-5"
-
-[node name="DownloadButton" type="Button" parent="CenterContainer/MarginContainer/VBoxContainer/MenuCenterContainer/MenuVBoxContainer/SearchMarginContainer/CenterContainer/HBoxContainer" unique_id=665007042]
-unique_name_in_owner = true
-custom_minimum_size = Vector2(80, 0)
-layout_mode = 2
-theme_override_fonts/font = SubResource("FontVariation_iowcg")
-text = "Download"
-
-[node name="SetupButton" type="Button" parent="CenterContainer/MarginContainer/VBoxContainer/MenuCenterContainer/MenuVBoxContainer/SearchMarginContainer/CenterContainer/HBoxContainer" unique_id=665007099]
-unique_name_in_owner = true
+[node name="Panel" type="Panel" parent="CenterContainer/MarginContainer/VBoxContainer/MenuCenterContainer" unique_id=1559609058]
 visible = false
-custom_minimum_size = Vector2(120, 0)
+custom_minimum_size = Vector2(1024, 400)
 layout_mode = 2
-theme_override_fonts/font = SubResource("FontVariation_iowcg")
-text = "Instalar runtime"
+theme_override_styles/panel = SubResource("StyleBoxFlat_57qmd")
 
-[node name="OpenDownloadsButton" type="Button" parent="CenterContainer/MarginContainer/VBoxContainer/MenuCenterContainer/MenuVBoxContainer/SearchMarginContainer/CenterContainer/HBoxContainer" unique_id=665007100]
-unique_name_in_owner = true
-custom_minimum_size = Vector2(110, 0)
+[node name="MenuVBoxContainer" type="VBoxContainer" parent="CenterContainer/MarginContainer/VBoxContainer/MenuCenterContainer" unique_id=497330298]
 layout_mode = 2
-theme_override_fonts/font = SubResource("FontVariation_iowcg")
-text = "Abrir pasta"
-
-[node name="LibraryButton" type="Button" parent="CenterContainer/MarginContainer/VBoxContainer/MenuCenterContainer/MenuVBoxContainer/SearchMarginContainer/CenterContainer/HBoxContainer" unique_id=665007101]
-unique_name_in_owner = true
-custom_minimum_size = Vector2(110, 0)
-layout_mode = 2
-theme_override_fonts/font = SubResource("FontVariation_iowcg")
-text = "Biblioteca"
-
-[node name="BindButton" type="Button" parent="CenterContainer/MarginContainer/VBoxContainer/MenuCenterContainer/MenuVBoxContainer/SearchMarginContainer/CenterContainer/HBoxContainer" unique_id=665007102]
-unique_name_in_owner = true
-custom_minimum_size = Vector2(90, 0)
-layout_mode = 2
-theme_override_fonts/font = SubResource("FontVariation_iowcg")
-text = "Exportar"
 
 [node name="QueueMarginContainer" type="MarginContainer" parent="CenterContainer/MarginContainer/VBoxContainer/MenuCenterContainer/MenuVBoxContainer" unique_id=2096184646]
 layout_mode = 2
+theme_override_constants/margin_bottom = -25
 
 [node name="ScrollContainer" type="ScrollContainer" parent="CenterContainer/MarginContainer/VBoxContainer/MenuCenterContainer/MenuVBoxContainer/QueueMarginContainer" unique_id=2080468135]
-custom_minimum_size = Vector2(500, 300)
+custom_minimum_size = Vector2(980.025, 366.925)
 layout_mode = 2
 scroll_hint_mode = 1
 
