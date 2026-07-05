@@ -21,6 +21,8 @@ pesado (scraping, download e merge dos capítulos).
 - ✖️ **Cancelamento por item** — cancele um download em andamento ou remova um
   item que ainda está esperando na fila.
 - 📦 **Empacotamento** em EPUB, CBZ ou PDF prontos para o e-reader.
+- 🌐 **Multi-idioma** — interface em PT-BR / English (troca em runtime, preferência
+  salva) e seletor separado para o idioma do conteúdo baixado.
 
 ---
 
