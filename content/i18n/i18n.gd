@@ -30,6 +30,7 @@ var _strings := {
 		# ("%s (MangaFire)"), pra não repetir nomes próprios por idioma.
 		"type_novel": "Novel",
 		"type_manga": "Mangá",
+		"type_other": "Outros sites",
 		# mensagens de status geral
 		"status_intro": "Cole uma URL e clique em Baixar.",
 		"status_need_url": "Cole uma URL primeiro.",
@@ -44,6 +45,8 @@ var _strings := {
 		"setup_progress": "%s (%d%%)",
 		"setup_done": "Runtime instalado com sucesso.",
 		"setup_failed": "Falha na instalação: %s",
+		"app_open_downloads": "Abrir pasta",
+		"status_open_downloads_failed": "Não consegui abrir a pasta de downloads.",
 		# estados dos cards
 		"st_queued": "na fila",
 		"st_starting": "iniciando...",
@@ -64,6 +67,7 @@ var _strings := {
 		"ph_chapters": "chapters eg:1,1-5",
 		"type_novel": "Novel",
 		"type_manga": "Manga",
+		"type_other": "Other sites",
 		"status_intro": "Paste a URL and click Download.",
 		"status_need_url": "Paste a URL first.",
 		"status_source_missing": "Downloader not found: %s",
@@ -76,6 +80,8 @@ var _strings := {
 		"setup_progress": "%s (%d%%)",
 		"setup_done": "Runtime installed successfully.",
 		"setup_failed": "Install failed: %s",
+		"app_open_downloads": "Open folder",
+		"status_open_downloads_failed": "Couldn't open the downloads folder.",
 		"st_queued": "queued",
 		"st_starting": "starting...",
 		"st_preparing": "preparing...",
