@@ -15,6 +15,7 @@ extends Control
 @onready var ui_lang_option: OptionButton = %UiLangOption
 @onready var download_button: Button = %DownloadButton
 @onready var setup_button: Button = %SetupButton
+@onready var open_downloads_button: Button = %OpenDownloadsButton
 @onready var status_label: Label = %StatusLabel
 @onready var queue_vbox_container: VBoxContainer = %QueueVBoxContainer
 
@@ -41,6 +42,7 @@ var _started: Dictionary = {}   # job.id -> true (já saiu da fila e começou)
 func _ready() -> void:
 	download_button.pressed.connect(_on_download_pressed)
 	setup_button.pressed.connect(_on_setup_pressed)
+	open_downloads_button.pressed.connect(_on_open_downloads_pressed)
 	ui_lang_option.item_selected.connect(_on_ui_lang_selected)
 	I18n.language_changed.connect(_on_language_changed)
 
@@ -94,6 +96,14 @@ func _on_setup_failed(message: String) -> void:
 	_refresh_setup_state()
 
 
+## Abre a pasta downloads/ no explorador de arquivos do SO. Cria a pasta antes se
+## ainda não existir (senão o SO reclama de caminho inexistente).
+func _on_open_downloads_pressed() -> void:
+	DirAccess.make_dir_recursive_absolute(Paths.output_dir)
+	if OS.shell_open(Paths.output_dir) != OK:
+		_set_status(I18n.t("status_open_downloads_failed"))
+
+
 # ---------------------------------------------------------------------------
 # Idioma
 # ---------------------------------------------------------------------------
@@ -113,6 +123,7 @@ func _on_language_changed(_locale: String) -> void:
 func _apply_language() -> void:
 	download_button.text = I18n.t("app_download")
 	setup_button.text = I18n.t("app_install")
+	open_downloads_button.text = I18n.t("app_open_downloads")
 	url_text_edit.placeholder_text = I18n.t("ph_url")
 	volumes_text_edit.placeholder_text = I18n.t("ph_volumes")
 	chapters_text_edit.placeholder_text = I18n.t("ph_chapters")
