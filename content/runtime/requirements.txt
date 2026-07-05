@@ -1,0 +1,15 @@
+# Dependências dos downloaders "enxutos" do Tsundoku
+# (centralnovel_dlv7.py, mangalivre_dlv4.py, mangadex_dl.py).
+# O aio_dl_wrapper.py usa só a stdlib. O AIO tem seu próprio
+# content/runtime/aio/requirements.txt (deps pesadas).
+#
+# Depois de instalar, o Playwright ainda precisa baixar o navegador:
+#   python -m playwright install chromium
+# (o setup_embed.ps1 já faz isso automaticamente)
+
+requests          # HTTP; usado pelo mangadex e como fallback dos scrapers
+beautifulsoup4    # parsing de HTML (centralnovel, mangalivre)
+curl_cffi         # TLS fingerprint de Chrome real / stealth (centralnovel, mangalivre)
+cloudscraper      # fallback anti-Cloudflare quando o curl_cffi não dá conta
+playwright        # renderiza o PDF via Chromium headless (centralnovel)
+tqdm              # barra de progresso no terminal
