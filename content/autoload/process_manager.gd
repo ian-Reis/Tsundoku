@@ -74,6 +74,11 @@ func _start(job: Job) -> void:
 
 	# Higiene de encoding no Windows (a saga do cp1252).
 	OS.set_environment("PYTHONUTF8", "1")
+	# No build exportado, mantém o Chromium do Playwright dentro do runtime/ (o
+	# setup do embeddable instala aqui), pra o pacote ficar autocontido. No
+	# editor não mexe, pra não quebrar o cache de dev já existente.
+	if not OS.has_feature("editor"):
+		OS.set_environment("PLAYWRIGHT_BROWSERS_PATH", Paths.runtime_dir.path_join("pw-browsers"))
 
 	job.pid = OS.create_process(Paths.python_exe, job.build_args())
 	if job.pid == -1:
