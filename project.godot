@@ -21,6 +21,7 @@ config/icon="uid://bihtoshobeqwy"
 I18n="*res://content/i18n/i18n.gd"
 Paths="*res://content/autoload/paths.gd"
 ProcessManager="*res://content/autoload/process_manager.gd"
+RuntimeSetup="*res://content/autoload/runtime_setup.gd"
 
 [display]
 
