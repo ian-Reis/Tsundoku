@@ -42,6 +42,53 @@ static func is_readable_in_app(ext: String) -> bool:
 	return ext.to_lower() in CBZ_EXTS
 
 
+const _IMAGE_EXTS := ["jpg", "jpeg", "png", "webp", "bmp"]
+const COVER_WIDTH := 160   # largura da miniatura (altura proporcional)
+
+
+## Capa do título: a 1ª página do 1º capítulo CBZ, já reduzida a miniatura.
+## Retorna null se o título só tem PDF/EPUB (sem imagem pra extrair).
+static func cover_for(item: Dictionary) -> Texture2D:
+	for ch in item.chapters:
+		if ch.ext in CBZ_EXTS:
+			return _cbz_first_image(ch.path)
+	return null
+
+
+static func _cbz_first_image(path: String) -> Texture2D:
+	var zip := ZIPReader.new()
+	if zip.open(path) != OK:
+		return null
+
+	var pages: Array[String] = []
+	for entry in zip.get_files():
+		if entry.get_extension().to_lower() in _IMAGE_EXTS:
+			pages.append(entry)
+	if pages.is_empty():
+		zip.close()
+		return null
+	pages.sort_custom(func(a, b): return a.naturalnocasecmp_to(b) < 0)
+
+	var data := zip.read_file(pages[0])
+	zip.close()
+
+	var img := Image.new()
+	var err: int
+	match pages[0].get_extension().to_lower():
+		"png": err = img.load_png_from_buffer(data)
+		"webp": err = img.load_webp_from_buffer(data)
+		"bmp": err = img.load_bmp_from_buffer(data)
+		_: err = img.load_jpg_from_buffer(data)
+	if err != OK:
+		return null
+
+	# Reduz pra miniatura (economiza memória — não guardamos a página cheia).
+	if img.get_width() > COVER_WIDTH:
+		var h := int(img.get_height() * float(COVER_WIDTH) / img.get_width())
+		img.resize(COVER_WIDTH, maxi(1, h), Image.INTERPOLATE_BILINEAR)
+	return ImageTexture.create_from_image(img)
+
+
 static func _list_readable(dir: String) -> Array:
 	var out: Array = []
 	for f in DirAccess.get_files_at(dir):
