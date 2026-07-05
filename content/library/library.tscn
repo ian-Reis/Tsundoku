@@ -1,0 +1,70 @@
+[gd_scene load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://content/library/library.gd" id="1_lib"]
+
+[node name="Library" type="CanvasLayer"]
+layer = 9
+script = ExtResource("1_lib")
+
+[node name="Root" type="Control" parent="."]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+
+[node name="BG" type="ColorRect" parent="Root"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+color = Color(0.07, 0.08, 0.1, 1)
+
+[node name="Margin" type="MarginContainer" parent="Root"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = 16.0
+offset_top = 16.0
+offset_right = -16.0
+offset_bottom = -16.0
+
+[node name="VB" type="VBoxContainer" parent="Root/Margin"]
+layout_mode = 2
+theme_override_constants/separation = 10
+
+[node name="TopBar" type="HBoxContainer" parent="Root/Margin/VB"]
+layout_mode = 2
+theme_override_constants/separation = 10
+
+[node name="TitleLabel" type="Label" parent="Root/Margin/VB/TopBar"]
+unique_name_in_owner = true
+layout_mode = 2
+size_flags_horizontal = 3
+text = "Biblioteca"
+
+[node name="RefreshButton" type="Button" parent="Root/Margin/VB/TopBar"]
+unique_name_in_owner = true
+layout_mode = 2
+text = "Atualizar"
+
+[node name="CloseButton" type="Button" parent="Root/Margin/VB/TopBar"]
+unique_name_in_owner = true
+layout_mode = 2
+text = "✕"
+
+[node name="ScrollContainer" type="ScrollContainer" parent="Root/Margin/VB"]
+layout_mode = 2
+size_flags_vertical = 3
+
+[node name="ListContainer" type="VBoxContainer" parent="Root/Margin/VB/ScrollContainer"]
+unique_name_in_owner = true
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_constants/separation = 6
+
+[node name="EmptyLabel" type="Label" parent="Root/Margin/VB"]
+unique_name_in_owner = true
+layout_mode = 2
+horizontal_alignment = 1
+text = "Nada baixado ainda."
