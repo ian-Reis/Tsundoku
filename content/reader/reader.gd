@@ -17,6 +17,7 @@ const IMAGE_EXTS := ["jpg", "jpeg", "png", "webp", "bmp"]
 var _zip: ZIPReader
 var _pages: Array[String] = []
 var _index: int = 0
+var _cbz_path: String = ""
 
 
 func _ready() -> void:
@@ -43,7 +44,9 @@ func open_cbz(path: String) -> bool:
 		push_error("Reader: nenhuma imagem em %s" % path)
 		return false
 
-	_index = 0
+	_cbz_path = path
+	# Retoma na última página lida (se houver), sem estourar o limite.
+	_index = clampi(Bookmarks.get_page(path), 0, _pages.size() - 1)
 	_show_page()
 	return true
 
@@ -87,6 +90,13 @@ func close() -> void:
 		_zip.close()
 	closed.emit()
 	queue_free()
+
+
+## Salva o bookmark ao sair — cobre tanto o botão Fechar (queue_free) quanto o
+## fechamento do app / troca de tela, já que _exit_tree roda nos dois casos.
+func _exit_tree() -> void:
+	if not _pages.is_empty() and _cbz_path != "":
+		Bookmarks.set_page(_cbz_path, _index)
 
 
 func _unhandled_input(event: InputEvent) -> void:
