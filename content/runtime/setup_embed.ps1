@@ -56,6 +56,11 @@ try {
     $pth = Get-ChildItem -Path $pyDir -Filter "python*._pth" | Select-Object -First 1
     $lines = Get-Content $pth.FullName | ForEach-Object { $_ -replace '^\s*#\s*import site', 'import site' }
     if ($lines -notcontains 'Lib\site-packages') { $lines += 'Lib\site-packages' }
+    # O aio-dl.py importa módulos vizinhos (aio_config, sites/) da pasta aio/. Como
+    # o embeddable não adiciona o dir do script ao sys.path, incluímos '..' (=
+    # aio/, relativo a aio/python/) no ._pth. Só o AIO precisa (scripts enxutos
+    # são single-file).
+    if ($Aio -and $lines -notcontains '..') { $lines += '..' }
     Set-Content -Path $pth.FullName -Value $lines -Encoding ascii
 
     $py = Join-Path $pyDir "python.exe"
@@ -67,13 +72,24 @@ try {
     if ($LASTEXITCODE -ne 0) { throw "get-pip falhou" }
     Remove-Item $getPip
 
+    # setuptools + wheel: o embeddable não os traz, e deps que vêm só como
+    # source distribution (sdist) precisam deles pra compilar/gerar metadata.
+    & $py -m pip install --no-warn-script-location setuptools wheel
+    if ($LASTEXITCODE -ne 0) { throw "setuptools/wheel falhou" }
+
     Write-Status "running" "Instalando dependências..." 60
     & $py -m pip install --no-warn-script-location -r (Join-Path $base "requirements.txt")
     if ($LASTEXITCODE -ne 0) { throw "pip install falhou" }
 
-    if (-not $Aio) {
+    # Navegador headless — no mesmo pw-browsers/ que o app aponta em runtime.
+    # Enxuto usa playwright (centralnovel); AIO usa patchright (fork p/ MangaFire VRF).
+    $env:PLAYWRIGHT_BROWSERS_PATH = Join-Path $scriptRoot "pw-browsers"
+    if ($Aio) {
+        Write-Status "running" "Baixando navegador (patchright)..." 80
+        & $py -m patchright install chromium
+        if ($LASTEXITCODE -ne 0) { throw "patchright install falhou" }
+    } else {
         Write-Status "running" "Baixando navegador (Chromium)..." 80
-        $env:PLAYWRIGHT_BROWSERS_PATH = Join-Path $scriptRoot "pw-browsers"
         & $py -m playwright install chromium
         if ($LASTEXITCODE -ne 0) { throw "playwright install falhou" }
     }
