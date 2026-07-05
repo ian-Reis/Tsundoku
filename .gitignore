@@ -27,7 +27,11 @@ content/runtime/.venv/
 content/runtime/.venvbackup/
 content/runtime/pw-browsers/
 content/runtime/python/
+content/runtime/aio/python/
 .build/
+
+# Manga downloads
+content/downloads/mangafire/
 
 # OS metadata
 .DS_Store
