@@ -17,7 +17,7 @@ extends RefCounted
 
 const NOVEL := 0
 const MANGALIVRE := 1
-const MANGAFIRE := 2
+const AIO := 2       # AIO-Webtoon-Downloader: cobre vários sites (detecta pela URL)
 const MANGADEX := 3
 
 const DEFS := [
@@ -30,7 +30,9 @@ const DEFS := [
 		script = "mangalivre_dlv4.py", volumes = false, lang_flag = "",
 	},
 	{
-		id = MANGAFIRE, key = "type_manga", site = "MangaFire", folder = "mangafire",
+		# O AIO detecta o site pela URL (Asura, FlameComics, MangaFire, etc.), por
+		# isso o rótulo é genérico "Outros sites" em vez de um site fixo.
+		id = AIO, key = "type_other", site = "AIO-Webtoon", folder = "aio",
 		script = "aio_dl_wrapper.py", volumes = false, lang_flag = "--language",
 		aio = true,
 	},
