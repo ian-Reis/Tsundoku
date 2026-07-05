@@ -35,12 +35,31 @@ func refresh() -> void:
 
 
 func _add_title(item: Dictionary) -> void:
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 12)
+	list_container.add_child(row)
+
+	# Capa (miniatura da 1ª página). Se não houver CBZ, fica em branco.
+	var cover := TextureRect.new()
+	cover.custom_minimum_size = Vector2(120, 170)
+	cover.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	cover.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	var tex := Library.cover_for(item)
+	if tex != null:
+		cover.texture = tex
+	row.add_child(cover)
+
+	var col := VBoxContainer.new()
+	col.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	col.add_theme_constant_override("separation", 6)
+	row.add_child(col)
+
 	var header := Label.new()
 	header.text = "%s   ·   %s   (%d)" % [item.title, item.source, item.chapters.size()]
-	list_container.add_child(header)
+	col.add_child(header)
 
 	var flow := HFlowContainer.new()
-	list_container.add_child(flow)
+	col.add_child(flow)
 	for ch in item.chapters:
 		var btn := Button.new()
 		btn.text = ch.name
