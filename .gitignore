@@ -21,8 +21,13 @@ content/runtime/downloads/
 # Temp files
 content/runtime/temp/
 
-# Python cache
+# Python
 __pycache__/
+content/runtime/.venv/
+content/runtime/.venvbackup/
+content/runtime/pw-browsers/
+content/runtime/python/
+.build/
 
 # OS metadata
 .DS_Store
