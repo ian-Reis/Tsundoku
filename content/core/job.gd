@@ -26,11 +26,14 @@ func _init(p_url: String, p_source_id: int, p_chapters: String, p_volumes: Strin
 ## Toda a lógica "qual flag para qual fonte" vem da def em Sources, não de ifs.
 func build_args() -> PackedStringArray:
 	var d := Sources.get_def(source_id)
+	# Saída em downloads/<fonte>/ — o script Python ainda cria a subpasta do título
+	# dentro dela (downloads/<fonte>/<título>/).
+	var out_dir: String = Paths.output_dir.path_join(d.get("folder", ""))
 	var args := PackedStringArray([
 		Paths.script(d.script),
 		url,
 		"--chapters", chapters,
-		"--output", Paths.output_dir,
+		"--output", out_dir,
 		"--status-file", status_file,
 	])
 	# --volumes só onde a fonte suporta e o usuário preencheu.
