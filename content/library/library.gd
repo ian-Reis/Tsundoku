@@ -7,6 +7,7 @@ extends CanvasLayer
 signal closed
 
 const READER := preload("res://content/reader/reader.tscn")
+const LIBRARY_ITEM := preload("res://content/library/library_item.tscn")
 
 @onready var title_label: Label = %TitleLabel
 @onready var refresh_button: Button = %RefreshButton
@@ -35,38 +36,10 @@ func refresh() -> void:
 
 
 func _add_title(item: Dictionary) -> void:
-	var row := HBoxContainer.new()
-	row.add_theme_constant_override("separation", 12)
-	list_container.add_child(row)
-
-	# Capa (miniatura da 1ª página). Se não houver CBZ, fica em branco.
-	var cover := TextureRect.new()
-	cover.custom_minimum_size = Vector2(120, 170)
-	cover.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-	cover.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
-	var tex := Library.cover_for(item)
-	if tex != null:
-		cover.texture = tex
-	row.add_child(cover)
-
-	var col := VBoxContainer.new()
-	col.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	col.add_theme_constant_override("separation", 6)
-	row.add_child(col)
-
-	var header := Label.new()
-	header.text = "%s   ·   %s   (%d)" % [item.title, item.source, item.chapters.size()]
-	col.add_child(header)
-
-	var flow := HFlowContainer.new()
-	col.add_child(flow)
-	for ch in item.chapters:
-		var btn := Button.new()
-		btn.text = ch.name
-		btn.clip_text = true
-		btn.custom_minimum_size = Vector2(220, 0)
-		btn.pressed.connect(_open_chapter.bind(ch))
-		flow.add_child(btn)
+	var node = LIBRARY_ITEM.instantiate()  # sem tipo: chamadas dinâmicas (setup)
+	list_container.add_child(node)
+	node.chapter_selected.connect(_open_chapter)
+	node.setup(item)
 
 
 func _open_chapter(ch: Dictionary) -> void:
