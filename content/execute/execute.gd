@@ -14,6 +14,7 @@ extends Control
 @onready var content_lang_option: OptionButton = %ContentLangOption
 @onready var ui_lang_option: OptionButton = %UiLangOption
 @onready var download_button: Button = %DownloadButton
+@onready var setup_button: Button = %SetupButton
 @onready var status_label: Label = %StatusLabel
 @onready var queue_vbox_container: VBoxContainer = %QueueVBoxContainer
 
@@ -39,6 +40,7 @@ var _started: Dictionary = {}   # job.id -> true (já saiu da fila e começou)
 
 func _ready() -> void:
 	download_button.pressed.connect(_on_download_pressed)
+	setup_button.pressed.connect(_on_setup_pressed)
 	ui_lang_option.item_selected.connect(_on_ui_lang_selected)
 	I18n.language_changed.connect(_on_language_changed)
 
@@ -48,8 +50,48 @@ func _ready() -> void:
 	ProcessManager.job_failed.connect(_on_job_failed)
 	ProcessManager.job_cancelled.connect(_on_job_cancelled)
 
+	RuntimeSetup.progress.connect(_on_setup_progress)
+	RuntimeSetup.finished.connect(_on_setup_finished)
+	RuntimeSetup.failed.connect(_on_setup_failed)
+
 	ui_lang_option.selected = I18n.locale_index()
 	_apply_language()
+	_refresh_setup_state()
+
+
+# ---------------------------------------------------------------------------
+# Instalação do runtime
+# ---------------------------------------------------------------------------
+## Mostra o botão "Instalar runtime" (e bloqueia o Download) enquanto o Python
+## do runtime não existe. Some quando estiver instalado.
+func _refresh_setup_state() -> void:
+	var needs := RuntimeSetup.needs_setup()
+	setup_button.visible = needs
+	download_button.disabled = needs or RuntimeSetup.is_running()
+	if needs and not RuntimeSetup.is_running():
+		_set_status(I18n.t("setup_needed"))
+
+
+func _on_setup_pressed() -> void:
+	setup_button.disabled = true
+	download_button.disabled = true
+	RuntimeSetup.install()
+
+
+func _on_setup_progress(percent: int, message: String) -> void:
+	_set_status(I18n.t("setup_progress", [message, percent]))
+
+
+func _on_setup_finished() -> void:
+	setup_button.disabled = false
+	_set_status(I18n.t("setup_done"))
+	_refresh_setup_state()
+
+
+func _on_setup_failed(message: String) -> void:
+	setup_button.disabled = false
+	_set_status(I18n.t("setup_failed", [message]))
+	_refresh_setup_state()
 
 
 # ---------------------------------------------------------------------------
@@ -62,12 +104,15 @@ func _on_ui_lang_selected(index: int) -> void:
 
 func _on_language_changed(_locale: String) -> void:
 	_apply_language()
+	if not RuntimeSetup.is_running():
+		_refresh_setup_state()
 
 
 ## (Re)aplica os textos estáticos no idioma atual. Cards já na fila mantêm o
 ## texto que tinham; só as próximas atualizações saem traduzidas.
 func _apply_language() -> void:
 	download_button.text = I18n.t("app_download")
+	setup_button.text = I18n.t("app_install")
 	url_text_edit.placeholder_text = I18n.t("ph_url")
 	volumes_text_edit.placeholder_text = I18n.t("ph_volumes")
 	chapters_text_edit.placeholder_text = I18n.t("ph_chapters")
