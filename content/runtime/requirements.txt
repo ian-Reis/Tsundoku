@@ -13,3 +13,8 @@ curl_cffi         # TLS fingerprint de Chrome real / stealth (centralnovel, mang
 cloudscraper      # fallback anti-Cloudflare quando o curl_cffi não dá conta
 playwright        # renderiza o PDF via Chromium headless (centralnovel)
 tqdm              # barra de progresso no terminal
+pypdf>=4.0        # chapterbind: merge/split de PDFs
+pillow>=9.0       # chapterbind + cbz2xtc: imagens
+numpy             # cbz2xtc: processamento de imagem pro XTEink X4
+numba             # cbz2xtc: JIT (acelera muito o dithering; opcional mas recomendado)
+lz4               # cbz2xtc: compressão opcional (--compress → .xtcz)
