@@ -16,9 +16,13 @@ run/main_scene="uid://bxonfxdb3omxn"
 config/features=PackedStringArray("4.7", "GL Compatibility")
 config/icon="uid://bihtoshobeqwy"
 
+[autoload]
+
+I18n="*res://content/i18n/i18n.gd"
+
 [display]
 
-window/size/viewport_width=1024
+window/size/viewport_width=1280
 window/size/viewport_height=720
 window/stretch/mode="canvas_items"
 window/stretch/aspect="expand"
