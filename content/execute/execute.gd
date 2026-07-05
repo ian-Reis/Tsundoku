@@ -17,6 +17,7 @@ extends Control
 @onready var setup_button: Button = %SetupButton
 @onready var open_downloads_button: Button = %OpenDownloadsButton
 @onready var library_button: Button = %LibraryButton
+@onready var bind_button: Button = %BindButton
 @onready var status_label: Label = %StatusLabel
 @onready var queue_vbox_container: VBoxContainer = %QueueVBoxContainer
 
@@ -45,6 +46,7 @@ func _ready() -> void:
 	setup_button.pressed.connect(_on_setup_pressed)
 	open_downloads_button.pressed.connect(_on_open_downloads_pressed)
 	library_button.pressed.connect(_on_library_pressed)
+	bind_button.pressed.connect(_on_bind_pressed)
 	ui_lang_option.item_selected.connect(_on_ui_lang_selected)
 	I18n.language_changed.connect(_on_language_changed)
 
@@ -114,6 +116,14 @@ func _on_library_pressed() -> void:
 	get_tree().root.add_child(lib)
 
 
+const BIND: PackedScene = preload("res://content/bind/bind.tscn")
+
+## Abre a tela de Juntar (chapterbind) como overlay.
+func _on_bind_pressed() -> void:
+	var screen := BIND.instantiate()
+	get_tree().root.add_child(screen)
+
+
 # ---------------------------------------------------------------------------
 # Idioma
 # ---------------------------------------------------------------------------
@@ -135,6 +145,7 @@ func _apply_language() -> void:
 	setup_button.text = I18n.t("app_install")
 	open_downloads_button.text = I18n.t("app_open_downloads")
 	library_button.text = I18n.t("app_library")
+	bind_button.text = I18n.t("app_bind")
 	url_text_edit.placeholder_text = I18n.t("ph_url")
 	volumes_text_edit.placeholder_text = I18n.t("ph_volumes")
 	chapters_text_edit.placeholder_text = I18n.t("ph_chapters")
