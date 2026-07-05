@@ -72,8 +72,16 @@ Todos os scripts escrevem o mesmo formato de JSON:
 ```
 tsundoku/                        # sem caracteres não-ASCII no caminho (ver Notas)
 ├─ content/
-│  ├─ execute/                   # tela de download + fila
-│  │  ├─ execute.gd / .tscn      # controla a fila de jobs
+│  ├─ autoload/                  # singletons globais (registrados no project.godot)
+│  │  ├─ paths.gd                # resolve python/venv/dirs por-OS (Scripts vs bin)
+│  │  └─ process_manager.gd      # motor: fila + spawn + polling → sinais (sem UI)
+│  ├─ core/                      # classes de domínio (class_name, sem UI)
+│  │  ├─ job.gd                  # modelo do download; monta os args
+│  │  ├─ source_registry.gd      # fontes como DADOS (Sources.DEFS)
+│  │  └─ status_contract.gd      # estados/campos do status.json + leitura
+│  ├─ i18n/i18n.gd               # textos PT-BR/EN (autoload I18n)
+│  ├─ execute/                   # tela de download (VIEW fina)
+│  │  ├─ execute.gd / .tscn      # monta jobs e escuta os sinais do ProcessManager
 │  │  └─ task.gd / .tscn         # card de um item da fila
 │  ├─ fonts/  ·  icons/
 │  └─ runtime/                   # o "back-end" Python
