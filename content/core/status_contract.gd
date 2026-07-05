@@ -36,6 +36,10 @@ static func read(status_file: String) -> Dictionary:
 		return {}
 	var content := file.get_as_text()
 	file.close()
+	# Descarta um BOM UTF-8 no início (alguns escritores no Windows o adicionam),
+	# senão o JSON.parse falha no primeiro caractere.
+	if content.length() > 0 and content.unicode_at(0) == 0xFEFF:
+		content = content.substr(1)
 	var json := JSON.new()
 	if json.parse(content) != OK:
 		return {}
